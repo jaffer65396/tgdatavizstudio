@@ -1,0 +1,8 @@
+{
+  "name": "DataViz Studio Analytics",
+  "description": "High-density data visualization and dashboard creation platform with interactive canvas, multi-source ingestion, and real-time analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

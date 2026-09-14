@@ -9,8 +9,11 @@ import {
   Eye,
   Edit3,
   XCircle,
-  ChevronDown
+  ChevronDown,
+  Upload,
+  Database
 } from 'lucide-react';
+import { Dataset } from '../../types/dashboard';
 
 interface ToolbarProps {
   zoom: number;
@@ -27,6 +30,10 @@ interface ToolbarProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onOpenImportData: () => void;
+  activeDataset?: Dataset;
+  datasets?: Dataset[];
+  onSelectDataset?: (id: string) => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -43,9 +50,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   canUndo,
   canRedo,
   onUndo,
-  onRedo
+  onRedo,
+  onOpenImportData,
+  activeDataset,
+  datasets = [],
+  onSelectDataset
 }) => {
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [datasetDropdownOpen, setDatasetDropdownOpen] = useState(false);
   const zoomOptions = [50, 75, 90, 100, 110, 125, 150];
 
   return (
@@ -117,7 +129,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>Add Filter</span>
         </button>
 
-        {/* Cross-Filter Enabled toggle matching screenshot */}
+        {/* Cross-Filter Enabled toggle */}
         <button
           onClick={onToggleCrossFilter}
           className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-[3px] transition-colors text-[11px] font-medium font-sans ${
@@ -143,8 +155,76 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         )}
       </div>
 
-      {/* Right controls: Add Widget, Edit Mode Switch */}
+      {/* Right controls: Import Data, Dataset Switcher, Add Widget, Edit Mode Switch */}
       <div className="flex items-center gap-2">
+        {/* Dataset Switcher & Import Data */}
+        <div className="flex items-center gap-1.5">
+          {activeDataset && (
+            <div className="relative">
+              <button
+                onClick={() => setDatasetDropdownOpen(!datasetDropdownOpen)}
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded-[3px] bg-[#181c24] border border-[#1e293b] hover:border-[#334155] text-[#dfe2ee] text-[11px] font-medium"
+                title="Active Data Source"
+              >
+                <Database className="w-3 h-3 text-[#10b981]" />
+                <span className="max-w-[130px] truncate">{activeDataset.name}</span>
+                <ChevronDown className="w-2.5 h-2.5 text-[#8c909f]" />
+              </button>
+
+              {datasetDropdownOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-60 bg-[#181c24] border border-[#334155] rounded-[4px] shadow-2xl py-1 z-50 text-[11px]"
+                  onMouseLeave={() => setDatasetDropdownOpen(false)}
+                >
+                  <div className="px-3 py-1 text-[10px] font-mono text-[#8c909f] uppercase tracking-wider border-b border-[#1e293b]">
+                    Active Datasets ({datasets.length})
+                  </div>
+                  {datasets.map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => {
+                        onSelectDataset?.(d.id);
+                        setDatasetDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-1.5 hover:bg-[#1e293b] flex items-center justify-between ${
+                        activeDataset.id === d.id ? 'text-[#4edea3] font-semibold bg-[#10b981]/10' : 'text-[#dfe2ee]'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{d.name}</span>
+                      <span className="text-[10px] font-mono text-[#8c909f]">
+                        {d.rowCount >= 1000000 ? `${(d.rowCount / 1000000).toFixed(1)}M` : d.rowCount.toLocaleString()}
+                      </span>
+                    </button>
+                  ))}
+                  <div className="my-1 border-t border-[#1e293b]" />
+                  <button
+                    onClick={() => {
+                      setDatasetDropdownOpen(false);
+                      onOpenImportData();
+                    }}
+                    className="w-full text-left px-3 py-1.5 hover:bg-[#1e293b] text-[#4edea3] font-medium flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3 h-3" />
+                    <span>+ Import New Dataset...</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Quick Import Data Button */}
+          <button
+            onClick={onOpenImportData}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[#10b981]/15 hover:bg-[#10b981]/25 border border-[#10b981]/40 text-[#4edea3] rounded-[3px] text-[11px] font-medium transition-all shadow-[0_1px_4px_rgba(16,185,129,0.15)]"
+            title="Import data easily from CSV, Excel, Google Sheets, or web feeds"
+          >
+            <Upload className="w-3 h-3" />
+            <span>Import Data</span>
+          </button>
+        </div>
+
+        <div className="h-4 w-[1px] bg-[#1e293b] mx-0.5" />
+
         {/* Add Widget */}
         <button
           onClick={onAddWidget}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardProject, DashboardElement, Dataset, FilterRule } from './types/dashboard';
 import { generateSalesDataset, getInitialProject } from './data/sampleDatasets';
+import { DataEngine } from './services/dataEngine';
 import { Header } from './components/layout/Header';
 import { Toolbar } from './components/layout/Toolbar';
 import { LeftRail, ActiveDrawer } from './components/layout/LeftRail';
@@ -20,6 +21,7 @@ import { WorkflowView } from './components/panels/WorkflowView';
 export default function App() {
   // Core state
   const [datasets, setDatasets] = useState<Dataset[]>([generateSalesDataset()]);
+  const [activeDatasetId, setActiveDatasetId] = useState<string>('ds-sales-global');
   const [project, setProject] = useState<DashboardProject>(getInitialProject());
   const [history, setHistory] = useState<DashboardProject[]>([getInitialProject()]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -40,7 +42,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  const currentDataset = datasets.find((d) => d.id === 'ds-sales-global') || datasets[0];
+  const currentDataset = datasets.find((d) => d.id === activeDatasetId) || datasets[0];
   const activePage = project.pages[project.activePageIndex] || project.pages[0];
   const selectedElement = activePage.elements.find((el) => el.id === selectedElementId) || null;
 
@@ -237,6 +239,34 @@ export default function App() {
   // Active cross-filter count
   const activeCrossFilterCount = Object.keys(project.crossFilters).length;
 
+  // Add new dataset handler with auto-generation support
+  const handleAddDataset = (newDs: Dataset, autoGenerateWidgets: boolean = true) => {
+    const existingIndex = datasets.findIndex((d) => d.id === newDs.id);
+    let updatedDatasets: Dataset[];
+    if (existingIndex >= 0) {
+      updatedDatasets = datasets.map((d) => (d.id === newDs.id ? newDs : d));
+    } else {
+      updatedDatasets = [...datasets, newDs];
+    }
+    setDatasets(updatedDatasets);
+    setActiveDatasetId(newDs.id);
+
+    if (autoGenerateWidgets) {
+      const generatedElements = DataEngine.generateWidgetsForDataset(newDs);
+      const newPageName = newDs.name.length > 20 ? newDs.name.slice(0, 18) + '...' : newDs.name;
+      const newPage = {
+        id: `p-${Date.now()}`,
+        name: newPageName,
+        elements: generatedElements
+      };
+      updateProjectWithHistory({
+        ...project,
+        pages: [...project.pages, newPage],
+        activePageIndex: project.pages.length
+      });
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#0b0f17] text-[#dfe2ee] overflow-hidden font-sans select-none">
       {/* 1. Top Header (Application Rail) */}
@@ -277,6 +307,10 @@ export default function App() {
         canRedo={historyIndex < history.length - 1}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        onOpenImportData={() => setIsDataSourceModalOpen(true)}
+        activeDataset={currentDataset}
+        datasets={datasets}
+        onSelectDataset={(id) => setActiveDatasetId(id)}
       />
 
       {/* 3. Main Workspace Area */}
@@ -298,6 +332,7 @@ export default function App() {
             }
           }}
           onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onOpenImportData={() => setIsDataSourceModalOpen(true)}
         />
 
         {/* Collapsible Left Drawers */}
@@ -306,6 +341,9 @@ export default function App() {
             isOpen={true}
             onClose={() => setActiveDrawer('none')}
             dataset={currentDataset}
+            datasets={datasets}
+            onSelectDataset={(id) => setActiveDatasetId(id)}
+            onOpenImportData={() => setIsDataSourceModalOpen(true)}
             onAddCalculatedField={(name, formula) => {
               const updatedCol = {
                 name,
@@ -439,6 +477,7 @@ export default function App() {
         onClose={() => setIsCreateModalOpen(false)}
         onCreate={handleCreateDashboard}
         datasets={datasets}
+        onOpenImportData={() => setIsDataSourceModalOpen(true)}
       />
 
       {/* Data Source & Ingestion Modal */}
@@ -446,9 +485,9 @@ export default function App() {
         isOpen={isDataSourceModalOpen}
         onClose={() => setIsDataSourceModalOpen(false)}
         datasets={datasets}
-        onAddDataset={(newDs) => {
-          setDatasets([...datasets, newDs]);
-        }}
+        activeDatasetId={activeDatasetId}
+        onSelectDataset={(id) => setActiveDatasetId(id)}
+        onAddDataset={handleAddDataset}
       />
 
       {/* Export Artifacts Modal */}

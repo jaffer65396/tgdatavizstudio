@@ -115,6 +115,182 @@ export function generateSalesDataset(): Dataset {
   };
 }
 
+// Generate SaaS Subscriptions & ARR analytical dataset
+export function generateSaaSDataset(): Dataset {
+  const plans = ['Starter ($49/mo)', 'Professional ($199/mo)', 'Enterprise ($999/mo)', 'Custom Annual'];
+  const regions = ['North America', 'EMEA', 'Asia Pacific', 'Latin America'];
+  const cohorts = ['2025-Q1', '2025-Q2', '2025-Q3', '2025-Q4', '2026-Q1'];
+  const rows: Record<string, any>[] = [];
+
+  cohorts.forEach((cohort) => {
+    regions.forEach((region) => {
+      plans.forEach((plan, pIdx) => {
+        const baseCustomers = (4 - pIdx) * 120 + 80;
+        const multiplier = region === 'North America' ? 2.5 : region === 'EMEA' ? 1.8 : 1.2;
+        const customers = Math.round(baseCustomers * multiplier);
+        const arpu = pIdx === 0 ? 49 : pIdx === 1 ? 199 : pIdx === 2 ? 999 : 2400;
+        const mrr = customers * arpu;
+        const arr = mrr * 12;
+        const churnRate = Number(((4.5 - pIdx * 0.8) + (Math.random() * 0.5)).toFixed(2));
+        const netRetention = Number((105 + pIdx * 6 + (Math.random() * 4)).toFixed(1));
+
+        rows.push({
+          Cohort: cohort,
+          Region: region,
+          PlanTier: plan,
+          ActiveSubscribers: customers,
+          MRR: mrr,
+          ARR: arr,
+          ChurnRatePct: churnRate,
+          NetRetentionPct: netRetention,
+          ARPU: arpu
+        });
+      });
+    });
+  });
+
+  return {
+    id: 'ds-saas-metrics',
+    name: 'SaaS ARR & Subscriber Cohorts',
+    sourceType: 'duckdb',
+    rowCount: rows.length,
+    lastRefreshed: 'Just now',
+    columns: [
+      { name: 'Cohort', type: 'string', category: 'time', nullable: false, uniqueCount: cohorts.length },
+      { name: 'Region', type: 'string', category: 'dimension', nullable: false, uniqueCount: regions.length },
+      { name: 'PlanTier', type: 'string', category: 'dimension', nullable: false, uniqueCount: plans.length },
+      { name: 'ActiveSubscribers', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'MRR', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'ARR', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'ChurnRatePct', type: 'number', category: 'measure', format: 'percent', nullable: false, uniqueCount: 20 },
+      { name: 'NetRetentionPct', type: 'number', category: 'measure', format: 'percent', nullable: false, uniqueCount: 24 },
+      { name: 'ARPU', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: plans.length }
+    ],
+    data: rows
+  };
+}
+
+// Generate E-Commerce & Retail analytical dataset
+export function generateEcommerceDataset(): Dataset {
+  const departments = ['Consumer Electronics', 'Apparel & Footwear', 'Home & Kitchen', 'Beauty & Personal Care', 'Sports & Outdoors'];
+  const customerTypes = ['Prime VIP', 'Returning Customer', 'New First-Time', 'Corporate Wholesale'];
+  const channels = ['Mobile App', 'Web Desktop', 'Social Commerce', 'Marketplace Partner'];
+  const months = ['2026-Jan', '2026-Feb', '2026-Mar', '2026-Apr', '2026-May', '2026-Jun'];
+  const rows: Record<string, any>[] = [];
+
+  months.forEach((month) => {
+    departments.forEach((dept, dIdx) => {
+      customerTypes.forEach((custType) => {
+        channels.forEach((channel) => {
+          const orders = Math.round(180 + dIdx * 90 + Math.random() * 80);
+          const aov = dept === 'Consumer Electronics' ? 260 : dept === 'Apparel & Footwear' ? 85 : 120;
+          const grossRevenue = Math.round(orders * aov * (0.9 + Math.random() * 0.2));
+          const discount = Math.round(grossRevenue * 0.12);
+          const netSales = grossRevenue - discount;
+          const shippingCost = Math.round(orders * 9.5);
+          const profit = Math.round(netSales * 0.38 - shippingCost);
+
+          rows.push({
+            Month: month,
+            Department: dept,
+            CustomerSegment: custType,
+            SalesChannel: channel,
+            OrderCount: orders,
+            GrossRevenue: grossRevenue,
+            NetSales: netSales,
+            DiscountAmount: discount,
+            ShippingCost: shippingCost,
+            NetProfit: profit
+          });
+        });
+      });
+    });
+  });
+
+  return {
+    id: 'ds-ecommerce-retail',
+    name: 'Omnichannel Retail & E-Commerce Orders',
+    sourceType: 'csv',
+    rowCount: rows.length,
+    lastRefreshed: 'Just now',
+    columns: [
+      { name: 'Month', type: 'string', category: 'time', nullable: false, uniqueCount: months.length },
+      { name: 'Department', type: 'string', category: 'dimension', nullable: false, uniqueCount: departments.length },
+      { name: 'CustomerSegment', type: 'string', category: 'dimension', nullable: false, uniqueCount: customerTypes.length },
+      { name: 'SalesChannel', type: 'string', category: 'dimension', nullable: false, uniqueCount: channels.length },
+      { name: 'OrderCount', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'GrossRevenue', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'NetSales', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'DiscountAmount', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'ShippingCost', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'NetProfit', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length }
+    ],
+    data: rows
+  };
+}
+
+// Generate Marketing & Acquisition analytical dataset
+export function generateMarketingDataset(): Dataset {
+  const networks = ['Google Search Ads', 'Meta (Instagram/FB)', 'LinkedIn B2B', 'YouTube Video', 'TikTok Ads'];
+  const campaigns = ['Q1 Brand Launch', 'Growth Retargeting', 'Product Demo Signup', 'Enterprise Webinar'];
+  const periods = ['2026-W08', '2026-W09', '2026-W10', '2026-W11', '2026-W12'];
+  const rows: Record<string, any>[] = [];
+
+  periods.forEach((period) => {
+    networks.forEach((network) => {
+      campaigns.forEach((campaign) => {
+        const spend = Math.round(1200 + Math.random() * 3800);
+        const impressions = spend * Math.round(18 + Math.random() * 12);
+        const clicks = Math.round(impressions * (0.018 + Math.random() * 0.012));
+        const leads = Math.round(clicks * (0.06 + Math.random() * 0.04));
+        const conversions = Math.round(leads * (0.18 + Math.random() * 0.12));
+        const pipelineValue = conversions * 4200;
+        const cpc = Number((spend / clicks).toFixed(2));
+        const cpa = conversions > 0 ? Number((spend / conversions).toFixed(2)) : spend;
+        const roas = Number(((pipelineValue / spend) * 100).toFixed(1));
+
+        rows.push({
+          Week: period,
+          AdNetwork: network,
+          Campaign: campaign,
+          AdSpend: spend,
+          Impressions: impressions,
+          Clicks: clicks,
+          Leads: leads,
+          Conversions: conversions,
+          PipelineValue: pipelineValue,
+          CPC: cpc,
+          CPA: cpa,
+          ROAS: roas
+        });
+      });
+    });
+  });
+
+  return {
+    id: 'ds-marketing-roi',
+    name: 'Growth Marketing & ROAS Attribution',
+    sourceType: 'rest_api',
+    rowCount: rows.length,
+    lastRefreshed: 'Just now',
+    columns: [
+      { name: 'Week', type: 'string', category: 'time', nullable: false, uniqueCount: periods.length },
+      { name: 'AdNetwork', type: 'string', category: 'dimension', nullable: false, uniqueCount: networks.length },
+      { name: 'Campaign', type: 'string', category: 'dimension', nullable: false, uniqueCount: campaigns.length },
+      { name: 'AdSpend', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'Impressions', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'Clicks', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'Leads', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'Conversions', type: 'number', category: 'measure', format: 'integer', nullable: false, uniqueCount: rows.length },
+      { name: 'PipelineValue', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: rows.length },
+      { name: 'CPC', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: 20 },
+      { name: 'CPA', type: 'number', category: 'measure', format: 'currency', nullable: false, uniqueCount: 30 },
+      { name: 'ROAS', type: 'number', category: 'measure', format: 'percent', nullable: false, uniqueCount: 35 }
+    ],
+    data: rows
+  };
+}
+
 // Initial dashboard configuration matching the screenshot
 export function getInitialProject(): import('../types/dashboard').DashboardProject {
   return {

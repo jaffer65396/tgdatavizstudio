@@ -8,7 +8,10 @@ import {
   Calculator,
   Plus,
   Play,
-  CheckCircle
+  CheckCircle,
+  Upload,
+  Layers,
+  ChevronDown
 } from 'lucide-react';
 import { Dataset, ColumnSchema } from '../../types/dashboard';
 
@@ -16,6 +19,9 @@ interface DataDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   dataset: Dataset;
+  datasets?: Dataset[];
+  onSelectDataset?: (id: string) => void;
+  onOpenImportData: () => void;
   onAddCalculatedField: (name: string, formula: string) => void;
 }
 
@@ -23,6 +29,9 @@ export const DataDrawer: React.FC<DataDrawerProps> = ({
   isOpen,
   onClose,
   dataset,
+  datasets = [],
+  onSelectDataset,
+  onOpenImportData,
   onAddCalculatedField
 }) => {
   const [calcName, setCalcName] = useState('');
@@ -57,15 +66,48 @@ export const DataDrawer: React.FC<DataDrawerProps> = ({
       </div>
 
       {/* Body */}
-      <div className="p-4 space-y-5 overflow-y-auto flex-1 font-sans">
-        {/* Dataset metadata badge */}
-        <div className="p-3 bg-[#181c24] border border-[#1e293b] rounded-[4px]">
-          <div className="text-[12px] font-semibold text-[#f8fafc] truncate">
-            {dataset.name}
+      <div className="p-4 space-y-4 overflow-y-auto flex-1 font-sans">
+        {/* Quick Action: Import Data button */}
+        <button
+          onClick={onOpenImportData}
+          className="w-full py-2 px-3 bg-[#10b981]/15 hover:bg-[#10b981]/25 border border-[#10b981]/40 text-[#4edea3] rounded-[4px] font-medium text-[12px] flex items-center justify-center gap-2 transition-all shadow-[0_1px_4px_rgba(16,185,129,0.1)]"
+        >
+          <Upload className="w-3.5 h-3.5" />
+          <span>+ Import New Data (File / Paste / Samples)</span>
+        </button>
+
+        {/* Dataset selector / metadata badge */}
+        <div className="p-3 bg-[#181c24] border border-[#1e293b] rounded-[4px] space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono text-[#8c909f] uppercase tracking-wider">
+              Active Dataset ({datasets.length} available)
+            </span>
+            <span className="text-[10px] font-mono text-[#4edea3]">
+              {dataset.rowCount >= 1000000 ? `${(dataset.rowCount / 1000000).toFixed(1)}M` : dataset.rowCount.toLocaleString()} rows
+            </span>
           </div>
-          <div className="text-[11px] font-mono text-[#8c909f] mt-1 flex items-center justify-between">
-            <span>{dataset.sourceType.toUpperCase()} Engine</span>
-            <span className="text-[#4edea3]">{(dataset.rowCount / 1000000).toFixed(1)}M rows</span>
+
+          {datasets.length > 1 ? (
+            <select
+              value={dataset.id}
+              onChange={(e) => onSelectDataset?.(e.target.value)}
+              className="w-full h-8 px-2 bg-[#0b0f17] border border-[#334155] rounded-[3px] text-[#f8fafc] font-medium text-[12px] outline-none"
+            >
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} ({d.rowCount.toLocaleString()} rows)
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="text-[12px] font-semibold text-[#f8fafc] truncate">
+              {dataset.name}
+            </div>
+          )}
+
+          <div className="text-[10px] font-mono text-[#8c909f] flex items-center justify-between pt-1 border-t border-[#1e293b]">
+            <span>Engine: {dataset.sourceType.toUpperCase()}</span>
+            <span>Refreshed: {dataset.lastRefreshed}</span>
           </div>
         </div>
 

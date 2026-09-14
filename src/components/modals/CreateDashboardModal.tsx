@@ -19,13 +19,15 @@ interface CreateDashboardModalProps {
   onClose: () => void;
   onCreate: (dashboardName: string, templateId: string, datasetId: string) => void;
   datasets: Dataset[];
+  onOpenImportData?: () => void;
 }
 
 export const CreateDashboardModal: React.FC<CreateDashboardModalProps> = ({
   isOpen,
   onClose,
   onCreate,
-  datasets
+  datasets,
+  onOpenImportData
 }) => {
   const [name, setName] = useState('Global Sales & Margin Intelligence v3');
   const [selectedTemplate, setSelectedTemplate] = useState('sales-v3');
@@ -118,9 +120,24 @@ export const CreateDashboardModal: React.FC<CreateDashboardModalProps> = ({
 
           {/* Dataset Binding Picker */}
           <div>
-            <label className="block text-[11px] font-mono uppercase tracking-wider text-[#8c909f] mb-1.5">
-              Analytical Dataset Source
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[11px] font-mono uppercase tracking-wider text-[#8c909f]">
+                Analytical Dataset Source
+              </label>
+              {onOpenImportData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenImportData();
+                  }}
+                  className="text-[11px] text-[#4edea3] hover:underline flex items-center gap-1 font-medium"
+                >
+                  <FileSpreadsheet className="w-3 h-3" />
+                  <span>+ Import New Data</span>
+                </button>
+              )}
+            </div>
             <div className="grid grid-cols-1 gap-2">
               {datasets.map((ds) => (
                 <div

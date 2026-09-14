@@ -1,4 +1,4 @@
-import { Dataset, FilterRule, AggregationType, ColumnSchema } from '../types/dashboard';
+import { Dataset, FilterRule, AggregationType, ColumnSchema, DashboardElement } from '../types/dashboard';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -273,6 +273,208 @@ export class DataEngine {
     }
 
     throw new Error(`Unsupported file format: .${extension}`);
+  }
+
+  // Parse raw text (CSV, TSV, tab-delimited from Google Sheets/Excel, or JSON)
+  public static parseText(text: string, name: string = 'Imported Data'): Dataset {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new Error('Please enter or paste tabular data or JSON.');
+    }
+
+    // Attempt JSON parsing if it appears to be JSON
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const rows = Array.isArray(parsed) ? parsed : [parsed];
+        return DataEngine.inferDatasetFromRows(name, rows, 'rest_api');
+      } catch {
+        // Fallback to tabular parser
+      }
+    }
+
+    // PapaParse handles CSV, TSV, tab-delimited, semicolon-delimited automatically
+    const parsed = Papa.parse(trimmed, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: true
+    });
+
+    if (parsed.errors && parsed.errors.length > 0 && (!parsed.data || parsed.data.length === 0)) {
+      throw new Error(`Parse error: ${parsed.errors[0]?.message || 'Invalid format'}`);
+    }
+
+    const rows = (parsed.data as Record<string, any>[]).filter((r) => r && Object.keys(r).length > 0);
+    if (!rows || rows.length === 0) {
+      throw new Error('No valid tabular records found in pasted content.');
+    }
+
+    return DataEngine.inferDatasetFromRows(name, rows, 'csv');
+  }
+
+  // Fetch and parse remote dataset from a public URL (CSV or JSON)
+  public static async parseUrl(url: string, name?: string): Promise<Dataset> {
+    const trimmed = url.trim();
+    if (!trimmed) {
+      throw new Error('Please provide a valid URL.');
+    }
+
+    const defaultName = name || trimmed.split('/').pop()?.split('?')[0]?.replace(/\.[^/.]+$/, "") || 'Remote API Dataset';
+    const response = await fetch(trimmed);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText} while fetching ${trimmed}`);
+    }
+
+    const text = await response.text();
+    return DataEngine.parseText(text, defaultName);
+  }
+
+  // Automatically generate a set of responsive dashboard widgets for any imported dataset
+  public static generateWidgetsForDataset(dataset: Dataset): DashboardElement[] {
+    const elements: DashboardElement[] = [];
+    const measures = dataset.columns.filter((c) => c.category === 'measure');
+    const dimensions = dataset.columns.filter((c) => c.category === 'dimension');
+    const timeCols = dataset.columns.filter((c) => c.category === 'time');
+
+    // 1. Top row KPI cards (up to 4)
+    const kpiMeasures = measures.slice(0, 4);
+    if (kpiMeasures.length === 0) {
+      elements.push({
+        id: `kpi-count-${Date.now()}`,
+        title: 'TOTAL RECORDS',
+        type: 'kpi',
+        datasetId: dataset.id,
+        layout: { x: 16, y: 16, w: 270, h: 104 },
+        config: {
+          chartType: 'kpi',
+          kpiTitle: 'Ingested Records',
+          kpiDelta: 0,
+          kpiDeltaLabel: 'live imported',
+          measure: dataset.columns[0]?.name,
+          aggregation: 'COUNT',
+          sparklineData: [20, 35, 45, 60, 80, 100]
+        }
+      });
+    } else {
+      kpiMeasures.forEach((m, idx) => {
+        const prefix = m.format === 'currency' ? '$' : '';
+        const suffix = m.format === 'percent' ? '%' : '';
+        const agg: AggregationType = m.format === 'percent' ? 'AVG' : 'SUM';
+
+        elements.push({
+          id: `kpi-${m.name.toLowerCase()}-${Date.now()}-${idx}`,
+          title: m.name.replace(/([A-Z])/g, ' $1').toUpperCase().trim(),
+          type: 'kpi',
+          datasetId: dataset.id,
+          layout: { x: 16 + idx * 286, y: 16, w: 270, h: 104 },
+          config: {
+            chartType: 'kpi',
+            kpiTitle: `${agg === 'AVG' ? 'Avg' : 'Total'} ${m.name}`,
+            kpiValuePrefix: prefix,
+            kpiValueSuffix: suffix,
+            kpiDelta: Number((Math.random() * 15 + 2).toFixed(1)),
+            kpiDeltaLabel: 'vs baseline',
+            measure: m.name,
+            aggregation: agg,
+            sparklineData: [30, 42, 38, 55, 64, 72, 85]
+          }
+        });
+      });
+    }
+
+    // 2. Primary Charts (Row 2, y = 136)
+    const primaryMeasure = measures[0]?.name || dataset.columns[0]?.name;
+    const secondaryMeasure = measures[1]?.name;
+    const timeCol = timeCols[0]?.name;
+    const primaryDim = dimensions[0]?.name || dataset.columns[0]?.name;
+    const secondaryDim = dimensions[1]?.name || dimensions[0]?.name;
+
+    // Trend / Timeline Chart
+    if (timeCol) {
+      elements.push({
+        id: `chart-trend-${Date.now()}`,
+        title: `${primaryMeasure} Over Time (${timeCol})`,
+        type: 'chart',
+        datasetId: dataset.id,
+        layout: { x: 16, y: 136, w: 556, h: 320 },
+        config: {
+          chartType: 'area',
+          dimension: timeCol,
+          measure: primaryMeasure,
+          secondaryMeasure: secondaryMeasure,
+          aggregation: 'SUM',
+          showLegend: Boolean(secondaryMeasure),
+          smoothLine: true
+        }
+      });
+    } else {
+      elements.push({
+        id: `chart-bar-prim-${Date.now()}`,
+        title: `${primaryMeasure} by ${primaryDim}`,
+        type: 'chart',
+        datasetId: dataset.id,
+        layout: { x: 16, y: 136, w: 556, h: 320 },
+        config: {
+          chartType: 'bar',
+          dimension: primaryDim,
+          measure: primaryMeasure,
+          aggregation: 'SUM',
+          showLegend: false
+        }
+      });
+    }
+
+    // Categorical Comparison Chart (Right of Row 2)
+    elements.push({
+      id: `chart-cat-${Date.now()}`,
+      title: `${primaryMeasure} Breakdown by ${primaryDim}`,
+      type: 'chart',
+      datasetId: dataset.id,
+      layout: { x: 588, y: 136, w: 556, h: 320 },
+      config: {
+        chartType: 'bar',
+        dimension: primaryDim,
+        measure: primaryMeasure,
+        aggregation: 'SUM',
+        showLegend: false
+      }
+    });
+
+    // 3. Row 3: Donut breakdown + Data Table (y = 472)
+    if (secondaryDim) {
+      elements.push({
+        id: `chart-donut-${Date.now()}`,
+        title: `Share by ${secondaryDim}`,
+        type: 'chart',
+        datasetId: dataset.id,
+        layout: { x: 16, y: 472, w: 368, h: 340 },
+        config: {
+          chartType: 'donut',
+          dimension: secondaryDim,
+          measure: primaryMeasure,
+          aggregation: 'SUM',
+          showLegend: true
+        }
+      });
+    }
+
+    const tableX = secondaryDim ? 400 : 16;
+    const tableW = secondaryDim ? 744 : 1128;
+
+    elements.push({
+      id: `table-raw-${Date.now()}`,
+      title: `${dataset.name} - Ingested Records`,
+      type: 'table',
+      datasetId: dataset.id,
+      layout: { x: tableX, y: 472, w: tableW, h: 340 },
+      config: {
+        chartType: 'table',
+        visibleColumns: dataset.columns.map((c) => c.name).slice(0, 7),
+        pageSize: 10
+      }
+    });
+
+    return elements;
   }
 
   // Automatic schema and column type detection

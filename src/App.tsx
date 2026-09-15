@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { DashboardProject, DashboardElement, Dataset, FilterRule } from './types/dashboard';
-import { generateSalesDataset, getInitialProject } from './data/sampleDatasets';
+import { DashboardProject, DashboardElement, Dataset, FilterRule, SortClause } from './types/dashboard';
+import {
+  generateSalesDataset,
+  getInitialProject,
+  getInitialProjects,
+  getGeospatialDashboardProject,
+  getExecutiveDashboardProject
+} from './data/sampleDatasets';
 import { DataEngine } from './services/dataEngine';
 import { Header } from './components/layout/Header';
 import { Toolbar } from './components/layout/Toolbar';
@@ -12,6 +18,8 @@ import { DataSourceModal } from './components/modals/DataSourceModal';
 import { ExportModal } from './components/modals/ExportModal';
 import { ShareModal } from './components/modals/ShareModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { DashboardsManagerModal } from './components/modals/DashboardsManagerModal';
+import { SequentialQueryModal } from './components/modals/SequentialQueryModal';
 import { PropertiesDrawer } from './components/panels/PropertiesDrawer';
 import { DataDrawer } from './components/panels/DataDrawer';
 import { FilterDrawer } from './components/panels/FilterDrawer';
@@ -22,18 +30,58 @@ export default function App() {
   // Core state
   const [datasets, setDatasets] = useState<Dataset[]>([generateSalesDataset()]);
   const [activeDatasetId, setActiveDatasetId] = useState<string>('ds-sales-global');
-  const [project, setProject] = useState<DashboardProject>(getInitialProject());
-  const [history, setHistory] = useState<DashboardProject[]>([getInitialProject()]);
+
+  // Multi-Dashboard Management State
+  const [projects, setProjects] = useState<DashboardProject[]>(() => {
+    try {
+      const saved = localStorage.getItem('dataviz_projects_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return getInitialProjects();
+  });
+
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => {
+    return localStorage.getItem('dataviz_active_project_id') || 'proj-sales-global';
+  });
+
+  // Current active project
+  const project = projects.find((p) => p.id === activeProjectId) || projects[0] || getInitialProject();
+
+  const [history, setHistory] = useState<DashboardProject[]>([project]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
+  // Sync projects and active ID to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('dataviz_projects_v3', JSON.stringify(projects));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [projects]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dataviz_active_project_id', activeProjectId);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [activeProjectId]);
+
   // UI state
-  // Notice: In the user's screenshot, the "Create Dashboard" modal is open in the center over the dimmed dashboard!
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(true);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isDashboardsManagerOpen, setIsDashboardsManagerOpen] = useState(false);
   const [isDataSourceModalOpen, setIsDataSourceModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
+  const [isSequentialModalOpen, setIsSequentialModalOpen] = useState(false);
+  const [sequentialModalElement, setSequentialModalElement] = useState<DashboardElement | null>(null);
 
   const [activeDrawer, setActiveDrawer] = useState<ActiveDrawer>('none');
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
@@ -46,32 +94,141 @@ export default function App() {
   const activePage = project.pages[project.activePageIndex] || project.pages[0];
   const selectedElement = activePage.elements.find((el) => el.id === selectedElementId) || null;
 
-  // Push project state to undo history
+  // Push project state to undo history and update current project in projects list
   const updateProjectWithHistory = (newProject: DashboardProject) => {
     const updatedHistory = history.slice(0, historyIndex + 1);
     updatedHistory.push(newProject);
     setHistory(updatedHistory);
     setHistoryIndex(updatedHistory.length - 1);
-    setProject(newProject);
+    
+    setProjects((prev) =>
+      prev.map((p) => (p.id === newProject.id ? newProject : p))
+    );
     setSaveStatus('unsaved');
 
     // Auto-save debounced simulation
     setTimeout(() => {
       setSaveStatus('saved');
-    }, 1200);
+    }, 800);
   };
 
   const handleUndo = () => {
     if (historyIndex > 0) {
+      const prev = history[historyIndex - 1];
       setHistoryIndex(historyIndex - 1);
-      setProject(history[historyIndex - 1]);
+      setProjects((all) => all.map((p) => (p.id === prev.id ? prev : p)));
     }
   };
 
   const handleRedo = () => {
     if (historyIndex < history.length - 1) {
+      const next = history[historyIndex + 1];
       setHistoryIndex(historyIndex + 1);
-      setProject(history[historyIndex + 1]);
+      setProjects((all) => all.map((p) => (p.id === next.id ? next : p)));
+    }
+  };
+
+  // Switch active project
+  const handleSelectProject = (id: string) => {
+    const target = projects.find((p) => p.id === id);
+    if (target) {
+      setActiveProjectId(id);
+      setHistory([target]);
+      setHistoryIndex(0);
+      setSelectedElementId(null);
+    }
+  };
+
+  // Create project
+  const handleCreateProject = (name: string, description?: string, template?: string) => {
+    let newProject: DashboardProject;
+    if (template === 'geospatial') {
+      newProject = {
+        ...getGeospatialDashboardProject(),
+        id: `proj-${Date.now()}`,
+        name: name || 'Geospatial & Regional Intelligence',
+        description: description || 'Geospatial territory intelligence and world choropleths',
+        savedAt: 'Just now'
+      };
+    } else if (template === 'executive') {
+      newProject = {
+        ...getExecutiveDashboardProject(),
+        id: `proj-${Date.now()}`,
+        name: name || 'Executive KPI & Strategy Command',
+        description: description || 'Corporate executive KPI command center and performance tracking',
+        savedAt: 'Just now'
+      };
+    } else {
+      newProject = {
+        id: `proj-${Date.now()}`,
+        name: name || 'Custom Precision Dashboard',
+        description: description || 'Custom analytical workspace',
+        version: 'v3.2.0',
+        savedAt: 'Just now',
+        canvas: { width: 1440, height: 900, gridSnap: true, gridSize: 16 },
+        theme: 'precision-dark',
+        crossFilteringEnabled: true,
+        activeFilters: [],
+        crossFilters: {},
+        activePageIndex: 0,
+        pages: [
+          {
+            id: `p-${Date.now()}`,
+            name: 'Main View',
+            elements: []
+          }
+        ]
+      };
+    }
+
+    setProjects((prev) => [newProject, ...prev]);
+    setActiveProjectId(newProject.id);
+    setHistory([newProject]);
+    setHistoryIndex(0);
+    setSelectedElementId(null);
+    setIsEditMode(true);
+  };
+
+  // Duplicate project
+  const handleDuplicateProject = (id: string) => {
+    const target = projects.find((p) => p.id === id);
+    if (!target) return;
+
+    const duplicated: DashboardProject = {
+      ...JSON.parse(JSON.stringify(target)),
+      id: `proj-${Date.now()}`,
+      name: `${target.name} (Copy)`,
+      savedAt: 'Just now'
+    };
+
+    setProjects((prev) => [duplicated, ...prev]);
+    setActiveProjectId(duplicated.id);
+    setHistory([duplicated]);
+    setHistoryIndex(0);
+  };
+
+  // Rename project
+  const handleRenameProject = (id: string, newName: string, newDescription?: string) => {
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? { ...p, name: newName, description: newDescription !== undefined ? newDescription : p.description, savedAt: 'Just now' }
+          : p
+      )
+    );
+  };
+
+  // Delete project
+  const handleDeleteProject = (id: string) => {
+    if (projects.length <= 1) return;
+    const remaining = projects.filter((p) => p.id !== id);
+    setProjects(remaining);
+    if (activeProjectId === id) {
+      const nextActive = remaining[0];
+      setActiveProjectId(nextActive.id);
+      setHistory([nextActive]);
+      setHistoryIndex(0);
+      setSelectedElementId(null);
     }
   };
 
@@ -143,6 +300,30 @@ export default function App() {
     });
   };
 
+  // Sequential Query Modal Open & Apply handlers
+  const handleOpenSequentialModal = (element?: DashboardElement | null) => {
+    setSequentialModalElement(element || selectedElement || null);
+    setIsSequentialModalOpen(true);
+  };
+
+  const handleApplyWidgetSort = (clauses: SortClause[]) => {
+    const target = sequentialModalElement || selectedElement;
+    if (!target) return;
+    const updated: DashboardElement = {
+      ...target,
+      config: {
+        ...target.config,
+        sequentialSort: clauses,
+        sequentialSortMode: 'pipeline'
+      }
+    };
+    handleUpdateElement(updated);
+  };
+
+  const handleSortDatasetPermanently = (sortedDataset: Dataset) => {
+    setDatasets((prev) => prev.map((d) => (d.id === sortedDataset.id ? sortedDataset : d)));
+  };
+
   // Delete element
   const handleDeleteElement = (id: string) => {
     const updatedElements = activePage.elements.filter((el) => el.id !== id);
@@ -188,6 +369,49 @@ export default function App() {
     setIsEditMode(true);
   };
 
+  // Add new Map Chart widget
+  const handleAddMapWidget = () => {
+    const newId = `widget-map-${Date.now()}`;
+    // Look for Country or Region column
+    const geoCol = currentDataset.columns.find(
+      (c) => c.name.toLowerCase().includes('country') || c.name.toLowerCase().includes('region') || c.name.toLowerCase().includes('state')
+    ) || currentDataset.columns.find((c) => c.category === 'dimension');
+    const measureCol = currentDataset.columns.find(
+      (c) => c.name.toLowerCase().includes('revenue') || c.name.toLowerCase().includes('sales') || c.category === 'measure'
+    );
+
+    const newElement: DashboardElement = {
+      id: newId,
+      title: 'Territory Intelligence (Geographic Map)',
+      type: 'chart',
+      datasetId: currentDataset.id,
+      layout: { x: 32, y: 32, w: 680, h: 420 },
+      config: {
+        chartType: 'map',
+        dimension: geoCol?.name || 'Country',
+        measure: measureCol?.name || 'Revenue',
+        aggregation: 'SUM',
+        mapMode: 'choropleth',
+        mapScope: 'world',
+        colorPalette: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'],
+        showLegend: true
+      }
+    };
+
+    const updatedElements = [...activePage.elements, newElement];
+    const updatedPages = project.pages.map((p, idx) =>
+      idx === project.activePageIndex ? { ...p, elements: updatedElements } : p
+    );
+
+    updateProjectWithHistory({
+      ...project,
+      pages: updatedPages
+    });
+
+    setSelectedElementId(newId);
+    setIsEditMode(true);
+  };
+
   // Add new page
   const handleAddPage = () => {
     const newPageNum = project.pages.length + 1;
@@ -206,34 +430,53 @@ export default function App() {
 
   // Create new dashboard from modal
   const handleCreateDashboard = (name: string, templateId: string, datasetId: string) => {
+    let newProj: DashboardProject;
     if (templateId === 'blank') {
-      const blankProj: DashboardProject = {
+      newProj = {
         ...getInitialProject(),
         id: `proj-${Date.now()}`,
-        name,
+        name: name || 'Blank Analytical Canvas',
+        description: 'Clean analytical workspace',
+        savedAt: 'Just now',
         pages: [
           {
-            id: 'p-blank-1',
+            id: `p-blank-${Date.now()}`,
             name: 'Main View',
             elements: []
           }
         ]
       };
-      setProject(blankProj);
-      setHistory([blankProj]);
-      setHistoryIndex(0);
-      setIsEditMode(true);
+    } else if (templateId === 'geospatial') {
+      newProj = {
+        ...getGeospatialDashboardProject(),
+        id: `proj-${Date.now()}`,
+        name: name || 'Geospatial & Regional Intelligence',
+        description: 'Interactive World Map choropleth, territory bubble heatmaps, and country cross-filtering',
+        savedAt: 'Just now'
+      };
+    } else if (templateId === 'executive') {
+      newProj = {
+        ...getExecutiveDashboardProject(),
+        id: `proj-${Date.now()}`,
+        name: name || 'Executive KPI & Strategy Command',
+        description: 'Corporate executive KPI command center and performance tracking',
+        savedAt: 'Just now'
+      };
     } else {
       const initial = getInitialProject();
-      const newProj = {
+      newProj = {
         ...initial,
         id: `proj-${Date.now()}`,
-        name
+        name: name || initial.name,
+        savedAt: 'Just now'
       };
-      setProject(newProj);
-      setHistory([newProj]);
-      setHistoryIndex(0);
     }
+
+    setProjects((prev) => [newProj, ...prev]);
+    setActiveProjectId(newProj.id);
+    setHistory([newProj]);
+    setHistoryIndex(0);
+    setSelectedElementId(null);
   };
 
   // Active cross-filter count
@@ -272,7 +515,10 @@ export default function App() {
       {/* 1. Top Header (Application Rail) */}
       <Header
         project={project}
-        onOpenProjectModal={() => setIsCreateModalOpen(true)}
+        projects={projects}
+        onSelectProject={handleSelectProject}
+        onOpenDashboardsManager={() => setIsDashboardsManagerOpen(true)}
+        onOpenProjectModal={() => setIsDashboardsManagerOpen(true)}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenDataSourceModal={() => setIsDataSourceModalOpen(true)}
@@ -298,7 +544,9 @@ export default function App() {
           })
         }
         onOpenFilterDrawer={() => setIsFilterDrawerOpen(true)}
+        onOpenSequentialModal={() => handleOpenSequentialModal()}
         onAddWidget={handleAddWidget}
+        onAddMapWidget={handleAddMapWidget}
         isEditMode={isEditMode}
         onToggleEditMode={() => setIsEditMode(!isEditMode)}
         activeCrossFilterCount={activeCrossFilterCount}
@@ -333,6 +581,7 @@ export default function App() {
           }}
           onOpenSettings={() => setIsSettingsModalOpen(true)}
           onOpenImportData={() => setIsDataSourceModalOpen(true)}
+          onOpenDashboards={() => setIsDashboardsManagerOpen(true)}
         />
 
         {/* Collapsible Left Drawers */}
@@ -396,6 +645,7 @@ export default function App() {
             onConfigureElement={(el) => {
               setSelectedElementId(el.id);
             }}
+            onOpenSequentialModal={(el) => handleOpenSequentialModal(el)}
           />
         )}
 
@@ -406,6 +656,7 @@ export default function App() {
             dataset={currentDataset}
             onClose={() => setSelectedElementId(null)}
             onUpdateElement={handleUpdateElement}
+            onOpenSequentialModal={() => handleOpenSequentialModal(selectedElement)}
           />
         )}
 
@@ -465,12 +716,26 @@ export default function App() {
         activePageIndex={project.activePageIndex}
         onSelectPage={(index) => {
           setSelectedElementId(null);
-          setProject({ ...project, activePageIndex: index });
+          updateProjectWithHistory({ ...project, activePageIndex: index });
         }}
         onAddPage={handleAddPage}
       />
 
       {/* 5. Modals */}
+      {/* Dashboards Manager & Switcher Modal */}
+      <DashboardsManagerModal
+        isOpen={isDashboardsManagerOpen}
+        onClose={() => setIsDashboardsManagerOpen(false)}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSelectProject={handleSelectProject}
+        onCreateProject={handleCreateProject}
+        onDuplicateProject={handleDuplicateProject}
+        onRenameProject={handleRenameProject}
+        onDeleteProject={handleDeleteProject}
+        datasets={datasets}
+      />
+
       {/* Centerpiece Create Dashboard Modal matching screenshot */}
       <CreateDashboardModal
         isOpen={isCreateModalOpen}
@@ -521,6 +786,19 @@ export default function App() {
             }
           });
         }}
+      />
+
+      {/* Sequential Query & Multi-Stage Sorter Modal */}
+      <SequentialQueryModal
+        isOpen={isSequentialModalOpen}
+        onClose={() => {
+          setIsSequentialModalOpen(false);
+          setSequentialModalElement(null);
+        }}
+        dataset={currentDataset}
+        element={sequentialModalElement || selectedElement}
+        onApplyWidgetSort={handleApplyWidgetSort}
+        onSortDatasetPermanently={handleSortDatasetPermanently}
       />
     </div>
   );

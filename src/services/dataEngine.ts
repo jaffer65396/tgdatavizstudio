@@ -1,4 +1,4 @@
-import { Dataset, FilterRule, AggregationType, ColumnSchema, DashboardElement } from '../types/dashboard';
+import { Dataset, FilterRule, AggregationType, ColumnSchema, DashboardElement, SortClause, SortType } from '../types/dashboard';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -13,6 +13,7 @@ export interface QueryOptions {
   limit?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
+  sequentialSort?: SortClause[];
 }
 
 export interface AggregatedResult {
@@ -143,10 +144,28 @@ export class DataEngine {
     });
 
     // Sorting
-    if (sortBy === 'value' || !sortBy) {
+    if (options.sequentialSort && options.sequentialSort.length > 0) {
+      // Apply multi-stage sequential query sorting to entries
+      entries.sort((a, b) => {
+        for (const clause of options.sequentialSort!) {
+          let cmp = 0;
+          if (clause.column === dimension || clause.column === 'category') {
+            cmp = DataEngine.compareValues(a.category, b.category, clause.order, clause.type);
+          } else if (clause.column === measure || clause.column === 'value') {
+            cmp = DataEngine.compareValues(a.value, b.value, clause.order, clause.type || 'numeric');
+          } else if (secondaryMeasure && (clause.column === secondaryMeasure || clause.column === 'secValue')) {
+            cmp = DataEngine.compareValues(a.secValue, b.secValue, clause.order, clause.type || 'numeric');
+          }
+          if (cmp !== 0) return cmp;
+        }
+        return 0;
+      });
+    } else if (sortBy === 'value' || !sortBy) {
       entries.sort((a, b) => sortOrder === 'desc' ? b.value - a.value : a.value - b.value);
     } else if (sortBy === 'category') {
-      entries.sort((a, b) => sortOrder === 'desc' ? b.category.localeCompare(a.category) : a.category.localeCompare(b.category));
+      entries.sort((a, b) => {
+        return DataEngine.compareValues(a.category, b.category, sortOrder, 'auto');
+      });
     }
 
     if (limit && limit > 0) {
@@ -234,6 +253,211 @@ export class DataEngine {
     }
 
     return `${prefix}${formatted}${suffix}`;
+  }
+
+  // Chronological parsing helper for quarters (Q1 2024), months (Jan, Feb...), and date strings
+  public static parseChronologicalValue(val: any): number {
+    if (val === null || val === undefined) return -Infinity;
+    const str = String(val).trim();
+    if (!str) return -Infinity;
+
+    // 1. Quarters pattern: e.g. "Q1 2024", "2024 Q2", "Q3-2023", "Q4"
+    const qMatch = str.match(/Q([1-4])(?:\s*[-/]?\s*(\d{2,4}))?/i) || str.match(/(\d{4})\s*[-/]?\s*Q([1-4])/i);
+    if (qMatch) {
+      let quarter = 1;
+      let year = 2024;
+      if (str.match(/Q([1-4])/i)) {
+        quarter = parseInt(str.match(/Q([1-4])/i)![1], 10);
+        const yMatch = str.match(/\b(20\d\d|19\d\d)\b/);
+        if (yMatch) year = parseInt(yMatch[1], 10);
+      } else if (str.match(/(\d{4})\s*[-/]?\s*Q([1-4])/i)) {
+        const parts = str.match(/(\d{4})\s*[-/]?\s*Q([1-4])/i)!;
+        year = parseInt(parts[1], 10);
+        quarter = parseInt(parts[2], 10);
+      }
+      return year * 10 + quarter;
+    }
+
+    // 2. Month name pattern: e.g. "Jan 2024", "January", "March 2023"
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const lower = str.toLowerCase();
+    const monthIndex = months.findIndex((m) => lower.startsWith(m));
+    if (monthIndex !== -1) {
+      const yMatch = str.match(/\b(20\d\d|19\d\d)\b/);
+      const year = yMatch ? parseInt(yMatch[1], 10) : 2024;
+      return year * 100 + monthIndex;
+    }
+
+    // 3. Standard Date / Timestamp
+    const parsedDate = Date.parse(str);
+    if (!isNaN(parsedDate)) {
+      return parsedDate;
+    }
+
+    // 4. Fallback numeric
+    const parsedNum = Number(str.replace(/[^0-9.-]/g, ''));
+    if (!isNaN(parsedNum) && parsedNum !== 0) {
+      return parsedNum;
+    }
+
+    return -Infinity;
+  }
+
+  // Universal value comparator supporting chronological, numeric, and natural alphanumeric orders
+  public static compareValues(valA: any, valB: any, order: 'asc' | 'desc' = 'asc', type: SortType = 'auto'): number {
+    const isDesc = order === 'desc';
+
+    // Handle nulls and undefined - push to bottom
+    if ((valA === null || valA === undefined || valA === '') && (valB === null || valB === undefined || valB === '')) return 0;
+    if (valA === null || valA === undefined || valA === '') return 1;
+    if (valB === null || valB === undefined || valB === '') return -1;
+
+    let res = 0;
+
+    if (type === 'chronological') {
+      const chronoA = this.parseChronologicalValue(valA);
+      const chronoB = this.parseChronologicalValue(valB);
+      if (chronoA !== -Infinity || chronoB !== -Infinity) {
+        res = chronoA - chronoB;
+        return isDesc ? -res : res;
+      }
+    }
+
+    // Check for explicit or auto numeric comparison
+    const numA = typeof valA === 'number' ? valA : Number(String(valA).replace(/[$%,]/g, ''));
+    const numB = typeof valB === 'number' ? valB : Number(String(valB).replace(/[$%,]/g, ''));
+    const isBothNumeric = (type === 'numeric') || (type === 'auto' && !isNaN(numA) && !isNaN(numB) && typeof valA !== 'boolean' && typeof valB !== 'boolean');
+
+    if (isBothNumeric && !isNaN(numA) && !isNaN(numB)) {
+      res = numA - numB;
+    } else {
+      // Natural collation (e.g. "Item 2" before "Item 10", case-insensitive)
+      const strA = String(valA);
+      const strB = String(valB);
+
+      // Auto check for chronological values
+      if (type === 'auto') {
+        const chronoA = this.parseChronologicalValue(strA);
+        const chronoB = this.parseChronologicalValue(strB);
+        if (chronoA !== -Infinity && chronoB !== -Infinity && chronoA !== chronoB) {
+          res = chronoA - chronoB;
+          return isDesc ? -res : res;
+        }
+      }
+
+      res = strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    return isDesc ? -res : res;
+  }
+
+  // Multi-stage sequential query sorter for records
+  public static sequentialSort(rows: Record<string, any>[], clauses: SortClause[]): Record<string, any>[] {
+    if (!clauses || clauses.length === 0) return [...rows];
+
+    const sorted = [...rows];
+    sorted.sort((a, b) => {
+      for (const clause of clauses) {
+        const valA = a[clause.column];
+        const valB = b[clause.column];
+        const cmp = DataEngine.compareValues(valA, valB, clause.order, clause.type || 'auto');
+        if (cmp !== 0) return cmp;
+      }
+      return 0;
+    });
+
+    return sorted;
+  }
+
+  // Determine the intelligent "Perfect Order" sequential query sorting pipeline for unsorted data
+  public static getPerfectOrderClauses(columns: ColumnSchema[]): SortClause[] {
+    const clauses: SortClause[] = [];
+
+    // 1. Primary Time / Chronological Column (Date, Quarter, Month, Year, Timestamp)
+    const timeCol = columns.find(
+      (c) => c.category === 'time' ||
+        ['date', 'quarter', 'month', 'year', 'period', 'timestamp'].some((k) => c.name.toLowerCase().includes(k))
+    );
+    if (timeCol) {
+      clauses.push({
+        id: `clause-chrono-${Date.now()}-1`,
+        column: timeCol.name,
+        order: 'asc',
+        type: 'chronological'
+      });
+    }
+
+    // 2. Primary Categorical / Geographic Dimension (Region, Country, Segment, Category)
+    const dimCols = columns.filter(
+      (c) => (c.category === 'dimension' || c.type === 'string') && (!timeCol || c.name !== timeCol.name)
+    );
+
+    // Prioritize high-level groupings like Region/Category/Segment
+    const priorityDim = dimCols.find((c) =>
+      ['region', 'category', 'country', 'segment', 'department', 'market'].some((k) => c.name.toLowerCase().includes(k))
+    ) || dimCols[0];
+
+    if (priorityDim) {
+      clauses.push({
+        id: `clause-dim-${Date.now()}-2`,
+        column: priorityDim.name,
+        order: 'asc',
+        type: 'alphanumeric'
+      });
+    }
+
+    // 3. Secondary Sub-Dimension (e.g. Country, Product, SubCategory)
+    const secondaryDim = dimCols.find((c) => c.name !== priorityDim?.name && (!timeCol || c.name !== timeCol.name));
+    if (secondaryDim && clauses.length < 3) {
+      clauses.push({
+        id: `clause-subdim-${Date.now()}-3`,
+        column: secondaryDim.name,
+        order: 'asc',
+        type: 'alphanumeric'
+      });
+    }
+
+    // 4. Primary Metric / Measure (e.g. Revenue, Sales, Profit) - sorted descending by magnitude
+    const measureCol = columns.find(
+      (c) => c.category === 'measure' ||
+        ['revenue', 'sales', 'profit', 'amount', 'total'].some((k) => c.name.toLowerCase().includes(k))
+    );
+    if (measureCol) {
+      clauses.push({
+        id: `clause-measure-${Date.now()}-4`,
+        column: measureCol.name,
+        order: 'desc',
+        type: 'numeric'
+      });
+    }
+
+    return clauses;
+  }
+
+  // Generate readable ANSI / DuckDB SQL statement for the sequential sort query
+  public static generateSequentialSortSql(tableName: string, clauses: SortClause[], limit?: number): string {
+    const cleanTable = tableName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    if (!clauses || clauses.length === 0) {
+      return `SELECT * FROM ${cleanTable};`;
+    }
+
+    const orderLines = clauses.map((c) => {
+      const typeHint = c.type === 'chronological' ? ' /* chronological */' : c.type === 'numeric' ? ' /* numeric */' : '';
+      return `  "${c.column}" ${c.order.toUpperCase()}${typeHint}`;
+    }).join(',\n');
+
+    const limitClause = limit ? `\nLIMIT ${limit}` : '';
+    return `-- Sequential Multi-Stage Query Pipeline\nSELECT *\nFROM "${cleanTable}"\nORDER BY\n${orderLines}${limitClause};`;
+  }
+
+  // Permanently or dynamically sorts an entire dataset into sequential order
+  public static sortDatasetSequentially(dataset: Dataset, clauses: SortClause[]): Dataset {
+    const sortedData = this.sequentialSort(dataset.data, clauses);
+    return {
+      ...dataset,
+      data: sortedData,
+      lastRefreshed: 'Just now (Sequentially Sorted)'
+    };
   }
 
   // Parse uploaded CSV/XLSX/JSON into a Dataset structure

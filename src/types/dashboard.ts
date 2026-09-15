@@ -10,7 +10,8 @@ export type ChartType =
   | 'heatmap'
   | 'gauge'
   | 'kpi'
-  | 'table';
+  | 'table'
+  | 'map';
 
 export type AggregationType = 'SUM' | 'AVG' | 'COUNT' | 'MIN' | 'MAX';
 
@@ -48,6 +49,22 @@ export interface WidgetLayout {
   h: number;
 }
 
+export type SortType = 'auto' | 'chronological' | 'numeric' | 'alphanumeric';
+
+export interface SortClause {
+  id: string;
+  column: string;
+  order: 'asc' | 'desc';
+  type?: SortType;
+}
+
+export interface SequentialQueryConfig {
+  enabled: boolean;
+  clauses: SortClause[];
+  generatedSql?: string;
+  appliedAt?: string;
+}
+
 export interface ChartConfig {
   chartType: ChartType;
   dimension?: string;
@@ -71,7 +88,12 @@ export interface ChartConfig {
   visibleColumns?: string[];
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
+  sequentialSort?: SortClause[];
+  sequentialSortMode?: 'disabled' | 'custom' | 'perfect-order';
   pageSize?: number;
+  // Map specific
+  mapMode?: 'choropleth' | 'bubble';
+  mapScope?: 'world' | 'regions';
 }
 
 export interface DashboardElement {

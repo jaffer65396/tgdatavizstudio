@@ -9,22 +9,29 @@ import {
   Palette,
   Hash,
   Layers,
-  ChevronRight
+  ChevronRight,
+  Globe,
+  ArrowUpDown,
+  Zap,
+  Sparkles
 } from 'lucide-react';
-import { DashboardElement, ChartType, AggregationType, Dataset } from '../../types/dashboard';
+import { DashboardElement, ChartType, AggregationType, Dataset, SortClause } from '../../types/dashboard';
+import { DataEngine } from '../../services/dataEngine';
 
 interface PropertiesDrawerProps {
   element: DashboardElement | null;
   dataset: Dataset;
   onClose: () => void;
   onUpdateElement: (updated: DashboardElement) => void;
+  onOpenSequentialModal?: () => void;
 }
 
 export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
   element,
   dataset,
   onClose,
-  onUpdateElement
+  onUpdateElement,
+  onOpenSequentialModal
 }) => {
   if (!element) return null;
 
@@ -36,6 +43,7 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
     { id: 'donut', label: 'Donut Chart', icon: PieChart },
     { id: 'pie', label: 'Pie Chart', icon: PieChart },
     { id: 'scatter', label: 'Scatter Plot', icon: Hash },
+    { id: 'map', label: 'Geographic Map', icon: Globe },
     { id: 'kpi', label: 'KPI Card', icon: Hash },
     { id: 'table', label: 'Data Table', icon: TableIcon }
   ];
@@ -123,11 +131,44 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
           </div>
         </div>
 
+        {/* Map Specific Configuration */}
+        {element.config.chartType === 'map' && (
+          <div>
+            <label className="block text-[10px] font-mono uppercase tracking-wider text-[#8c909f] mb-1">
+              Map Visualization Style
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleChangeField('mapMode', 'choropleth')}
+                className={`py-1 px-2 rounded-[3px] text-[11px] font-medium border text-center transition-colors ${
+                  (element.config.mapMode || 'choropleth') === 'choropleth'
+                    ? 'bg-[#10b981]/20 border-[#10b981]/50 text-[#4edea3]'
+                    : 'bg-[#181c24] border-[#1e293b] text-[#8c909f] hover:text-[#dfe2ee]'
+                }`}
+              >
+                Choropleth (Heat)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleChangeField('mapMode', 'bubble')}
+                className={`py-1 px-2 rounded-[3px] text-[11px] font-medium border text-center transition-colors ${
+                  element.config.mapMode === 'bubble'
+                    ? 'bg-[#3b82f6]/20 border-[#3b82f6]/50 text-[#adc6ff]'
+                    : 'bg-[#181c24] border-[#1e293b] text-[#8c909f] hover:text-[#dfe2ee]'
+                }`}
+              >
+                Bubbles (Pins)
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Primary Dimension (X-Axis / Category) */}
         {element.config.chartType !== 'kpi' && (
           <div>
             <label className="block text-[10px] font-mono uppercase tracking-wider text-[#8c909f] mb-1">
-              Dimension (X-Axis)
+              {element.config.chartType === 'map' ? 'Geographic Dimension (Country / Region)' : 'Dimension (X-Axis)'}
             </label>
             <select
               value={element.config.dimension || ''}
@@ -203,6 +244,91 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
                 {agg}
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Sequential Query & Multi-Key Sorting Pipeline */}
+        <div className="pt-2 border-t border-[#1e293b]">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[10px] font-mono uppercase tracking-wider text-[#8c909f] flex items-center gap-1">
+              <ArrowUpDown className="w-3 h-3 text-[#3b82f6]" />
+              <span>Sequential Sort Pipeline</span>
+            </label>
+            {element.config.sequentialSort && element.config.sequentialSort.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-[#3b82f6]/20 text-[#93c5fd]">
+                {element.config.sequentialSort.length} {element.config.sequentialSort.length === 1 ? 'stage' : 'stages'}
+              </span>
+            )}
+          </div>
+
+          {/* Quick Auto-Detect or Configure buttons */}
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const perfectClauses = DataEngine.getPerfectOrderClauses(dataset.columns);
+                  onUpdateElement({
+                    ...element,
+                    config: {
+                      ...element.config,
+                      sequentialSort: perfectClauses,
+                      sequentialSortMode: 'pipeline'
+                    }
+                  });
+                }}
+                className="py-1.5 px-2 bg-[#10b981]/15 hover:bg-[#10b981]/25 border border-[#10b981]/40 rounded-[3px] text-[10px] font-mono font-medium text-[#4edea3] flex items-center justify-center gap-1 transition-colors"
+                title="Automatically sort by Chronological Date -> Region -> Measure DESC"
+              >
+                <Zap className="w-3 h-3 fill-current text-yellow-300" />
+                <span>⚡ Perfect Order</span>
+              </button>
+
+              {onOpenSequentialModal && (
+                <button
+                  type="button"
+                  onClick={onOpenSequentialModal}
+                  className="py-1.5 px-2 bg-[#1e293b] hover:bg-[#334155] border border-[#3b82f6]/30 rounded-[3px] text-[10px] font-mono font-medium text-[#93c5fd] flex items-center justify-center gap-1 transition-colors"
+                >
+                  <ArrowUpDown className="w-3 h-3 text-[#60a5fa]" />
+                  <span>Pipeline Editor</span>
+                </button>
+              )}
+            </div>
+
+            {/* Display active stages summary if present */}
+            {element.config.sequentialSort && element.config.sequentialSort.length > 0 && (
+              <div className="p-2 bg-[#0b0f17] border border-[#1e293b] rounded-[4px] space-y-1 text-[10px] font-mono">
+                {element.config.sequentialSort.map((stage, idx) => (
+                  <div key={stage.id || idx} className="flex items-center justify-between text-[#adc6ff]">
+                    <span className="flex items-center gap-1">
+                      <span className="text-[#64748b]">{idx + 1}.</span>
+                      <span className="text-[#f8fafc] font-medium">{stage.column}</span>
+                    </span>
+                    <span className="text-[#60a5fa] font-bold">
+                      {stage.order.toUpperCase()}
+                      {stage.type === 'chronological' && ' ⏱'}
+                    </span>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onUpdateElement({
+                      ...element,
+                      config: {
+                        ...element.config,
+                        sequentialSort: [],
+                        sequentialSortMode: undefined
+                      }
+                    });
+                  }}
+                  className="text-[9px] text-[#ef4444] hover:underline pt-1 block"
+                >
+                  Clear Sequential Pipeline
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

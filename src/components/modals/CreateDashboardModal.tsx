@@ -10,7 +10,8 @@ import {
   Sparkles,
   DollarSign,
   Boxes,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Globe
 } from 'lucide-react';
 import { Dataset } from '../../types/dashboard';
 
@@ -43,6 +44,14 @@ export const CreateDashboardModal: React.FC<CreateDashboardModalProps> = ({
       icon: TrendingUp,
       tag: 'RECOMMENDED',
       widgets: '4 KPIs • 4 Charts • 1 Matrix Table'
+    },
+    {
+      id: 'geospatial',
+      name: 'Geospatial & Regional Intelligence (Map Charts)',
+      description: 'Interactive World Map choropleth, territory bubble heatmaps, and country cross-filtering.',
+      icon: Globe,
+      tag: 'MAPS & GEOGRAPHY',
+      widgets: '4 KPIs • 1 World Map • 2 Regional Charts • 2 Tables'
     },
     {
       id: 'financial-pl',

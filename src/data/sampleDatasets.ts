@@ -1,4 +1,4 @@
-import { Dataset } from '../types/dashboard';
+import { Dataset, DashboardProject } from '../types/dashboard';
 
 // Generate comprehensive Global Sales & Margin analytical dataset
 export function generateSalesDataset(): Dataset {
@@ -521,16 +521,18 @@ export function getInitialProject(): import('../types/dashboard').DashboardProje
         name: 'Geographic Drilldown',
         elements: [
           {
-            id: 'geo-chart-bar',
-            title: 'Revenue by Country (Global Top 14)',
+            id: 'geo-map-global',
+            title: 'Global Revenue & Market Penetration (Interactive Map)',
             type: 'chart',
             datasetId: 'ds-sales-global',
-            layout: { x: 16, y: 16, w: 700, h: 420 },
+            layout: { x: 16, y: 16, w: 730, h: 420 },
             config: {
-              chartType: 'bar',
+              chartType: 'map',
               dimension: 'Country',
               measure: 'Revenue',
-              aggregation: 'SUM'
+              aggregation: 'SUM',
+              mapMode: 'choropleth',
+              showLegend: true
             }
           },
           {
@@ -538,7 +540,7 @@ export function getInitialProject(): import('../types/dashboard').DashboardProje
             title: 'Regional Revenue Share',
             type: 'chart',
             datasetId: 'ds-sales-global',
-            layout: { x: 732, y: 16, w: 412, h: 420 },
+            layout: { x: 762, y: 16, w: 382, h: 420 },
             config: {
               chartType: 'pie',
               dimension: 'Region',
@@ -549,7 +551,7 @@ export function getInitialProject(): import('../types/dashboard').DashboardProje
           },
           {
             id: 'geo-table-countries',
-            title: 'Country Performance & Discount Ratios',
+            title: 'Country Performance Matrix (Cross-Filtered by Map)',
             type: 'table',
             datasetId: 'ds-sales-global',
             layout: { x: 16, y: 452, w: 1128, h: 320 },
@@ -565,4 +567,333 @@ export function getInitialProject(): import('../types/dashboard').DashboardProje
       }
     ]
   };
+}
+
+// Generate secondary preloaded dashboard: Global Geospatial & Regional Operations
+export function getGeospatialDashboardProject(): DashboardProject {
+  return {
+    id: 'proj-geospatial',
+    name: 'Geospatial & Regional Intelligence',
+    description: 'Global territory analysis, choropleth heatmaps, and regional logistics cross-filtering',
+    version: 'v3.2.0',
+    savedAt: 'Just now',
+    canvas: {
+      width: 1440,
+      height: 900,
+      gridSnap: true,
+      gridSize: 16
+    },
+    theme: 'precision-dark',
+    crossFilteringEnabled: true,
+    activeFilters: [],
+    crossFilters: {},
+    activePageIndex: 0,
+    pages: [
+      {
+        id: 'p-geo-main',
+        name: 'World Map Command',
+        elements: [
+          // KPI 1: Active Territories
+          {
+            id: 'geo-kpi-1',
+            title: 'ACTIVE TERRITORIES',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 16, w: 270, h: 104 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'Global Markets Covered',
+              kpiDelta: 2,
+              kpiDeltaLabel: 'new entities added',
+              measure: 'UnitsSold',
+              aggregation: 'COUNT',
+              sparklineData: [11, 12, 12, 13, 14, 14, 15]
+            }
+          },
+          // KPI 2: Top Market Revenue
+          {
+            id: 'geo-kpi-2',
+            title: 'TOP MARKET REVENUE',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 302, y: 16, w: 270, h: 104 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'North America Volume',
+              kpiValuePrefix: '$',
+              kpiDelta: 24.5,
+              kpiDeltaLabel: 'YoY territory growth',
+              measure: 'Revenue',
+              aggregation: 'SUM',
+              sparklineData: [28, 34, 39, 44, 52, 61, 74]
+            }
+          },
+          // KPI 3: Mean Regional Margin
+          {
+            id: 'geo-kpi-3',
+            title: 'BLENDED REGIONAL MARGIN',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 588, y: 16, w: 270, h: 104 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'Global Operating Margin',
+              kpiValueSuffix: '%',
+              kpiDelta: 4.1,
+              kpiDeltaLabel: '+410 bps vs baseline',
+              measure: 'MarginPct',
+              aggregation: 'AVG',
+              sparklineData: [59, 61, 62, 63, 64, 65, 66.8]
+            }
+          },
+          // KPI 4: Units Deployed
+          {
+            id: 'geo-kpi-4',
+            title: 'UNITS DEPLOYED',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 874, y: 16, w: 270, h: 104 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'Worldwide Deployments',
+              kpiDelta: 16.8,
+              kpiDeltaLabel: 'expansion rate',
+              measure: 'UnitsSold',
+              aggregation: 'SUM',
+              sparklineData: [450, 480, 520, 580, 640, 710, 820]
+            }
+          },
+
+          // Centerpiece 1: Interactive Geographic Map Chart
+          {
+            id: 'geo-map-central',
+            title: 'Global Territory Choropleth & Bubble Heatmap (Click to Cross-Filter)',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 136, w: 770, h: 420 },
+            config: {
+              chartType: 'map',
+              dimension: 'Country',
+              measure: 'Revenue',
+              aggregation: 'SUM',
+              mapMode: 'choropleth',
+              showLegend: true
+            }
+          },
+
+          // Centerpiece 2: Regional Revenue Distribution
+          {
+            id: 'geo-bar-regional',
+            title: 'Revenue by Macro Economic Region',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 802, y: 136, w: 342, h: 420 },
+            config: {
+              chartType: 'bar-horizontal',
+              dimension: 'Region',
+              measure: 'Revenue',
+              aggregation: 'SUM'
+            }
+          },
+
+          // Bottom: Country Performance Matrix Table
+          {
+            id: 'geo-table-matrix',
+            title: 'Territory Revenue, Units & Financial Margin Breakdown',
+            type: 'table',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 572, w: 1128, h: 280 },
+            config: {
+              chartType: 'table',
+              visibleColumns: ['Country', 'Region', 'Revenue', 'Profit', 'UnitsSold', 'MarginPct', 'DiscountPct'],
+              sortBy: 'Revenue',
+              sortOrder: 'desc',
+              pageSize: 7
+            }
+          }
+        ]
+      },
+      {
+        id: 'p-geo-regional-ops',
+        name: 'Regional Supply & Logistics',
+        elements: [
+          {
+            id: 'geo-ops-bar',
+            title: 'Units Sold by Country',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 16, w: 556, h: 360 },
+            config: {
+              chartType: 'bar',
+              dimension: 'Country',
+              measure: 'UnitsSold',
+              aggregation: 'SUM'
+            }
+          },
+          {
+            id: 'geo-ops-scatter',
+            title: 'Pricing Variance vs Regional Margin',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 588, y: 16, w: 556, h: 360 },
+            config: {
+              chartType: 'scatter',
+              dimension: 'Region',
+              measure: 'Revenue',
+              secondaryMeasure: 'MarginPct',
+              aggregation: 'AVG'
+            }
+          },
+          {
+            id: 'geo-ops-table',
+            title: 'Country Order Log & Fulfillment Tracking',
+            type: 'table',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 392, w: 1128, h: 360 },
+            config: {
+              chartType: 'table',
+              visibleColumns: ['Quarter', 'Country', 'Region', 'UnitsSold', 'Revenue', 'Cost', 'Profit'],
+              sortBy: 'UnitsSold',
+              sortOrder: 'desc',
+              pageSize: 8
+            }
+          }
+        ]
+      }
+    ]
+  };
+}
+
+// Generate secondary preloaded dashboard: Executive KPI Command Center
+export function getExecutiveDashboardProject(): DashboardProject {
+  return {
+    id: 'proj-executive',
+    name: 'Executive KPI Command Center',
+    description: 'Corporate executive performance dashboard with revenue trajectory and profit margins',
+    version: 'v3.2.0',
+    savedAt: 'Just now',
+    canvas: {
+      width: 1440,
+      height: 900,
+      gridSnap: true,
+      gridSize: 16
+    },
+    theme: 'precision-dark',
+    crossFilteringEnabled: true,
+    activeFilters: [],
+    crossFilters: {},
+    activePageIndex: 0,
+    pages: [
+      {
+        id: 'p-exec-main',
+        name: 'Executive Cockpit',
+        elements: [
+          {
+            id: 'exec-kpi-1',
+            title: 'BILLED REVENUE',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 16, w: 360, h: 110 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'Annualized Revenue',
+              kpiValuePrefix: '$',
+              kpiDelta: 21.4,
+              kpiDeltaLabel: 'vs prior year plan',
+              measure: 'Revenue',
+              aggregation: 'SUM',
+              sparklineData: [45, 52, 59, 68, 77, 89, 102]
+            }
+          },
+          {
+            id: 'exec-kpi-2',
+            title: 'NET OPERATING PROFIT',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 392, y: 16, w: 360, h: 110 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'EBITDA Contribution',
+              kpiValuePrefix: '$',
+              kpiDelta: 28.2,
+              kpiDeltaLabel: 'operating leverage gain',
+              measure: 'Profit',
+              aggregation: 'SUM',
+              sparklineData: [24, 28, 33, 40, 48, 58, 72]
+            }
+          },
+          {
+            id: 'exec-kpi-3',
+            title: 'GROSS MARGIN RATE',
+            type: 'kpi',
+            datasetId: 'ds-sales-global',
+            layout: { x: 768, y: 16, w: 360, h: 110 },
+            config: {
+              chartType: 'kpi',
+              kpiTitle: 'Blended Margin',
+              kpiValueSuffix: '%',
+              kpiDelta: 3.8,
+              kpiDeltaLabel: 'ahead of budget',
+              measure: 'MarginPct',
+              aggregation: 'AVG',
+              sparklineData: [61, 62, 63, 64, 65, 66.5, 67.2]
+            }
+          },
+          {
+            id: 'exec-chart-trajectory',
+            title: 'Quarterly Trajectory & Expansion Pace',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 142, w: 736, h: 360 },
+            config: {
+              chartType: 'area',
+              dimension: 'Quarter',
+              measure: 'Revenue',
+              secondaryMeasure: 'Profit',
+              aggregation: 'SUM',
+              showLegend: true,
+              smoothLine: true
+            }
+          },
+          {
+            id: 'exec-chart-cat',
+            title: 'Revenue by Business Unit',
+            type: 'chart',
+            datasetId: 'ds-sales-global',
+            layout: { x: 768, y: 142, w: 360, h: 360 },
+            config: {
+              chartType: 'donut',
+              dimension: 'Category',
+              measure: 'Revenue',
+              aggregation: 'SUM',
+              showLegend: true
+            }
+          },
+          {
+            id: 'exec-table-summary',
+            title: 'Segment Unit Financials & Strategic Accounts',
+            type: 'table',
+            datasetId: 'ds-sales-global',
+            layout: { x: 16, y: 518, w: 1112, h: 320 },
+            config: {
+              chartType: 'table',
+              visibleColumns: ['Segment', 'Category', 'Quarter', 'Revenue', 'Cost', 'Profit', 'MarginPct'],
+              sortBy: 'Revenue',
+              sortOrder: 'desc',
+              pageSize: 7
+            }
+          }
+        ]
+      }
+    ]
+  };
+}
+
+// Generate preloaded initial dashboards list
+export function getInitialProjects(): DashboardProject[] {
+  return [
+    getInitialProject(),
+    getGeospatialDashboardProject(),
+    getExecutiveDashboardProject()
+  ];
 }

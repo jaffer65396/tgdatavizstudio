@@ -11,7 +11,9 @@ import {
   XCircle,
   ChevronDown,
   Upload,
-  Database
+  Database,
+  Globe,
+  ArrowUpDown
 } from 'lucide-react';
 import { Dataset } from '../../types/dashboard';
 
@@ -21,7 +23,9 @@ interface ToolbarProps {
   crossFilterEnabled: boolean;
   onToggleCrossFilter: () => void;
   onOpenFilterDrawer: () => void;
+  onOpenSequentialModal?: () => void;
   onAddWidget: () => void;
+  onAddMapWidget?: () => void;
   isEditMode: boolean;
   onToggleEditMode: () => void;
   activeCrossFilterCount: number;
@@ -42,7 +46,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   crossFilterEnabled,
   onToggleCrossFilter,
   onOpenFilterDrawer,
+  onOpenSequentialModal,
   onAddWidget,
+  onAddMapWidget,
   isEditMode,
   onToggleEditMode,
   activeCrossFilterCount,
@@ -143,6 +149,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span>Cross-Filter Enabled</span>
         </button>
 
+        {/* Sequential Query & Sort Pipeline Button */}
+        {onOpenSequentialModal && (
+          <button
+            onClick={onOpenSequentialModal}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-[3px] bg-[#3b82f6]/15 hover:bg-[#3b82f6]/25 text-[#93c5fd] border border-[#3b82f6]/30 transition-colors text-[11px] font-medium font-sans"
+            title="Configure multi-key sequential query and auto-sort into perfect order"
+          >
+            <ArrowUpDown className="w-3 h-3 text-[#60a5fa]" />
+            <span>Sequential Query</span>
+          </button>
+        )}
+
         {/* Clear active cross filters if any are set */}
         {activeCrossFilterCount > 0 && (
           <button
@@ -233,6 +251,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <Plus className="w-3 h-3 text-[#3b82f6]" />
           <span>Add Widget</span>
         </button>
+
+        {/* Add Map Widget Shortcut */}
+        {onAddMapWidget && (
+          <button
+            onClick={onAddMapWidget}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[#3b82f6]/10 hover:bg-[#3b82f6]/20 border border-[#3b82f6]/30 text-[#93c5fd] rounded-[3px] text-[11px] font-medium transition-colors"
+            title="Add interactive Geographic Map Chart"
+          >
+            <Globe className="w-3 h-3 text-[#60a5fa]" />
+            <span>Add Map</span>
+          </button>
+        )}
 
         {/* Edit / View Mode Toggle */}
         <button

@@ -4,6 +4,7 @@ import { WidgetContainer } from './WidgetContainer';
 import { KpiCardWidget } from '../widgets/KpiCardWidget';
 import { EChartWidget } from '../widgets/EChartWidget';
 import { TableWidget } from '../widgets/TableWidget';
+import { MapChartWidget } from '../widgets/MapChartWidget';
 import { DataEngine } from '../../services/dataEngine';
 import { ExportService } from '../../services/exportService';
 
@@ -18,6 +19,7 @@ interface DashboardCanvasProps {
   onDeleteElement: (id: string) => void;
   onCrossFilter: (dimension: string, value: string) => void;
   onConfigureElement: (element: DashboardElement) => void;
+  onOpenSequentialModal?: (element: DashboardElement) => void;
 }
 
 export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
@@ -30,7 +32,8 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
   onUpdateElement,
   onDeleteElement,
   onCrossFilter,
-  onConfigureElement
+  onConfigureElement,
+  onOpenSequentialModal
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const activePage = project.pages[project.activePageIndex] || project.pages[0];
@@ -208,7 +211,19 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
                 <TableWidget
                   rows={filteredRows}
                   config={element.config}
+                  columnsSchema={dataset.columns}
                   onExportCsv={() => ExportService.exportDatasetCsv(dataset)}
+                  onOpenSequentialModal={() => onOpenSequentialModal?.(element)}
+                  onUpdateSequentialSort={(clauses) => {
+                    onUpdateElement({
+                      ...element,
+                      config: {
+                        ...element.config,
+                        sequentialSort: clauses,
+                        sequentialSortMode: 'pipeline'
+                      }
+                    });
+                  }}
                 />
               </WidgetContainer>
             );
@@ -222,6 +237,9 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
             aggregation: element.config.aggregation || 'SUM',
             filters: project.activeFilters,
             crossFilters: project.crossFilters,
+            sortBy: element.config.sortBy,
+            sortOrder: element.config.sortOrder,
+            sequentialSort: element.config.sequentialSort,
             limit: 14
           });
 
@@ -241,16 +259,29 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
               onMouseDownDrag={(e) => handleMouseDownDrag(e, element)}
               onMouseDownResize={(e) => handleMouseDownResize(e, element)}
             >
-              <EChartWidget
-                config={element.config}
-                data={queryResult}
-                selectedValues={currentCrossFilterVals}
-                onSliceClick={(val) => {
-                  if (project.crossFilteringEnabled && element.config.dimension) {
-                    onCrossFilter(element.config.dimension, val);
-                  }
-                }}
-              />
+              {element.config.chartType === 'map' ? (
+                <MapChartWidget
+                  config={element.config}
+                  data={queryResult}
+                  selectedValues={currentCrossFilterVals}
+                  onSliceClick={(val) => {
+                    if (project.crossFilteringEnabled && element.config.dimension) {
+                      onCrossFilter(element.config.dimension, val);
+                    }
+                  }}
+                />
+              ) : (
+                <EChartWidget
+                  config={element.config}
+                  data={queryResult}
+                  selectedValues={currentCrossFilterVals}
+                  onSliceClick={(val) => {
+                    if (project.crossFilteringEnabled && element.config.dimension) {
+                      onCrossFilter(element.config.dimension, val);
+                    }
+                  }}
+                />
+              )}
             </WidgetContainer>
           );
         })}

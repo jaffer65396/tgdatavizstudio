@@ -13,12 +13,18 @@ import {
   Save,
   Database,
   BarChart2,
-  HelpCircle
+  HelpCircle,
+  LayoutDashboard,
+  Plus,
+  Layers
 } from 'lucide-react';
 import { DashboardProject } from '../../types/dashboard';
 
 interface HeaderProps {
   project: DashboardProject;
+  projects?: DashboardProject[];
+  onSelectProject?: (projectId: string) => void;
+  onOpenDashboardsManager?: () => void;
   onOpenProjectModal: () => void;
   onOpenExportModal: () => void;
   onOpenShareModal: () => void;
@@ -32,6 +38,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   project,
+  projects = [],
+  onSelectProject,
+  onOpenDashboardsManager,
   onOpenProjectModal,
   onOpenExportModal,
   onOpenShareModal,
@@ -43,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleDarkMode
 }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [dashboardDropdownOpen, setDashboardDropdownOpen] = useState(false);
 
   const toggleMenu = (menuName: string) => {
     setActiveMenu((prev) => (prev === menuName ? null : menuName));
@@ -66,17 +76,85 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Project Switcher / Breadcrumb */}
-        <div className="flex items-center gap-1.5 pl-2 border-l border-[#1e293b]">
-          <button
-            onClick={onOpenProjectModal}
-            className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#181c24] rounded-[3px] text-[#dfe2ee] hover:text-[#f8fafc] transition-colors"
-          >
-            <Folder className="w-3.5 h-3.5 text-[#8c909f]" />
-            <span className="font-medium text-[12px] max-w-[220px] truncate">
-              {project.name}
-            </span>
-            <ChevronDown className="w-3 h-3 text-[#8c909f]" />
-          </button>
+        <div className="flex items-center gap-1.5 pl-2 border-l border-[#1e293b] relative">
+          <div className="relative">
+            <button
+              onClick={() => setDashboardDropdownOpen(!dashboardDropdownOpen)}
+              className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#181c24] rounded-[3px] text-[#dfe2ee] hover:text-[#f8fafc] transition-colors group"
+              title="Click to switch dashboard or manage projects"
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 text-[#3b82f6]" />
+              <span className="font-medium text-[12px] max-w-[220px] truncate">
+                {project.name}
+              </span>
+              <ChevronDown className="w-3 h-3 text-[#8c909f] group-hover:text-[#f8fafc]" />
+            </button>
+
+            {dashboardDropdownOpen && (
+              <div
+                className="absolute left-0 top-full mt-1.5 w-72 bg-[#141b27] border border-[#334155] rounded-[5px] shadow-2xl py-1.5 z-50 text-[12px] text-[#dfe2ee]"
+                onMouseLeave={() => setDashboardDropdownOpen(false)}
+              >
+                <div className="px-3 py-1 text-[10px] font-mono text-[#8c909f] uppercase tracking-wider border-b border-[#1e293b] flex items-center justify-between">
+                  <span>Switch Dashboard ({projects.length})</span>
+                  <button
+                    onClick={() => {
+                      setDashboardDropdownOpen(false);
+                      onOpenDashboardsManager?.();
+                    }}
+                    className="text-[#60a5fa] hover:underline"
+                  >
+                    Manage All
+                  </button>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto py-1">
+                  {projects.map((p) => {
+                    const isSelected = p.id === project.id;
+                    const widgetCount = p.pages.reduce((acc, page) => acc + page.elements.length, 0);
+
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          onSelectProject?.(p.id);
+                          setDashboardDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 hover:bg-[#1e293b] flex items-start justify-between transition-colors ${
+                          isSelected ? 'bg-[#3b82f6]/15 text-[#60a5fa]' : 'text-[#dfe2ee]'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="font-medium text-[12px] truncate">{p.name}</div>
+                          <div className="text-[10px] text-[#8c909f] truncate flex items-center gap-1.5 mt-0.5">
+                            <span>{p.pages.length} {p.pages.length === 1 ? 'Page' : 'Pages'}</span>
+                            <span>•</span>
+                            <span>{widgetCount} Widgets</span>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <Check className="w-3.5 h-3.5 text-[#60a5fa] shrink-0 mt-0.5" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="border-t border-[#1e293b] pt-1 px-1">
+                  <button
+                    onClick={() => {
+                      setDashboardDropdownOpen(false);
+                      onOpenDashboardsManager?.();
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 hover:bg-[#1e293b] text-[#60a5fa] font-medium flex items-center gap-1.5 rounded-[3px]"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Manage / Create New Dashboard...</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Saved Status Badge */}
           <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] bg-[#10b981]/15 border border-[#10b981]/30 text-[#4edea3] text-[11px] font-mono">
@@ -87,6 +165,15 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Traditional Workbench Menu Items */}
         <nav className="flex items-center gap-0.5 ml-2 text-[#94a3b8]">
+          {/* Quick Dashboards Manager Trigger */}
+          <button
+            onClick={onOpenDashboardsManager}
+            className="flex items-center gap-1 px-2 py-1 rounded-[3px] text-[12px] text-[#60a5fa] bg-[#3b82f6]/10 hover:bg-[#3b82f6]/20 border border-[#3b82f6]/30 transition-colors font-medium mr-1"
+            title="Browse and manage all dashboards"
+          >
+            <Layers className="w-3 h-3 text-[#60a5fa]" />
+            <span>Dashboards</span>
+          </button>
           {/* File Menu */}
           <div className="relative">
             <button

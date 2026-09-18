@@ -5,6 +5,7 @@ import { KpiCardWidget } from '../widgets/KpiCardWidget';
 import { EChartWidget } from '../widgets/EChartWidget';
 import { TableWidget } from '../widgets/TableWidget';
 import { MapChartWidget } from '../widgets/MapChartWidget';
+import { HtmlWidget } from '../widgets/HtmlWidget';
 import { DataEngine } from '../../services/dataEngine';
 import { ExportService } from '../../services/exportService';
 
@@ -20,6 +21,8 @@ interface DashboardCanvasProps {
   onCrossFilter: (dimension: string, value: string) => void;
   onConfigureElement: (element: DashboardElement) => void;
   onOpenSequentialModal?: (element: DashboardElement) => void;
+  onOpenHtmlModal?: (element: DashboardElement) => void;
+  onOpenDataTypeModal?: (columnName?: string) => void;
 }
 
 export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
@@ -33,7 +36,9 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
   onDeleteElement,
   onCrossFilter,
   onConfigureElement,
-  onOpenSequentialModal
+  onOpenSequentialModal,
+  onOpenHtmlModal,
+  onOpenDataTypeModal
 }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const activePage = project.pages[project.activePageIndex] || project.pages[0];
@@ -189,6 +194,28 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
             );
           }
 
+          if (element.type === 'html') {
+            return (
+              <WidgetContainer
+                key={element.id}
+                element={element}
+                isSelected={isSelected}
+                isEditMode={isEditMode}
+                onSelect={() => onSelectElement(element.id)}
+                onDelete={() => onDeleteElement(element.id)}
+                onConfigure={() => onConfigureElement(element)}
+                onMouseDownDrag={(e) => handleMouseDownDrag(e, element)}
+                onMouseDownResize={(e) => handleMouseDownResize(e, element)}
+              >
+                <HtmlWidget
+                  element={element}
+                  isEditMode={isEditMode}
+                  onEditCode={() => onOpenHtmlModal?.(element)}
+                />
+              </WidgetContainer>
+            );
+          }
+
           if (element.type === 'table') {
             const filteredRows = DataEngine.filterRows(
               dataset.data,
@@ -214,6 +241,7 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
                   columnsSchema={dataset.columns}
                   onExportCsv={() => ExportService.exportDatasetCsv(dataset)}
                   onOpenSequentialModal={() => onOpenSequentialModal?.(element)}
+                  onOpenDataTypeModal={onOpenDataTypeModal}
                   onUpdateSequentialSort={(clauses) => {
                     onUpdateElement({
                       ...element,
@@ -240,7 +268,12 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
             sortBy: element.config.sortBy,
             sortOrder: element.config.sortOrder,
             sequentialSort: element.config.sequentialSort,
-            limit: 14
+            showTrendline: element.config.showTrendline,
+            trendlineModel: element.config.trendlineModel,
+            polynomialDegree: element.config.polynomialDegree,
+            forecastPeriods: element.config.forecastPeriods,
+            showConfidenceInterval: element.config.showConfidenceInterval,
+            limit: element.config.chartType === 'scatter' ? 60 : 14
           });
 
           const currentCrossFilterVals = element.config.dimension

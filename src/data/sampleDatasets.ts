@@ -401,7 +401,11 @@ export function getInitialProject(): import('../types/dashboard').DashboardProje
               secondaryMeasure: 'Profit',
               aggregation: 'SUM',
               showLegend: true,
-              smoothLine: true
+              smoothLine: true,
+              showTrendline: true,
+              trendlineModel: 'linear',
+              forecastPeriods: 2,
+              showConfidenceInterval: true
             }
           },
 
@@ -741,7 +745,10 @@ export function getGeospatialDashboardProject(): DashboardProject {
               dimension: 'Region',
               measure: 'Revenue',
               secondaryMeasure: 'MarginPct',
-              aggregation: 'AVG'
+              aggregation: 'AVG',
+              showTrendline: true,
+              trendlineModel: 'linear',
+              showConfidenceInterval: true
             }
           },
           {

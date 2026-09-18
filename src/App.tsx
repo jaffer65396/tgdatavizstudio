@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DashboardProject, DashboardElement, Dataset, FilterRule, SortClause } from './types/dashboard';
+import { DashboardProject, DashboardElement, Dataset, FilterRule, SortClause, DataType } from './types/dashboard';
 import {
   generateSalesDataset,
   getInitialProject,
@@ -20,6 +20,8 @@ import { ShareModal } from './components/modals/ShareModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { DashboardsManagerModal } from './components/modals/DashboardsManagerModal';
 import { SequentialQueryModal } from './components/modals/SequentialQueryModal';
+import { HtmlEditorModal } from './components/modals/HtmlEditorModal';
+import { DataTypeFormatModal } from './components/modals/DataTypeFormatModal';
 import { PropertiesDrawer } from './components/panels/PropertiesDrawer';
 import { DataDrawer } from './components/panels/DataDrawer';
 import { FilterDrawer } from './components/panels/FilterDrawer';
@@ -82,6 +84,10 @@ export default function App() {
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [isSequentialModalOpen, setIsSequentialModalOpen] = useState(false);
   const [sequentialModalElement, setSequentialModalElement] = useState<DashboardElement | null>(null);
+  const [isHtmlModalOpen, setIsHtmlModalOpen] = useState(false);
+  const [htmlModalElement, setHtmlModalElement] = useState<DashboardElement | null>(null);
+  const [isDataTypeModalOpen, setIsDataTypeModalOpen] = useState(false);
+  const [dataTypeModalColumn, setDataTypeModalColumn] = useState<string | undefined>(undefined);
 
   const [activeDrawer, setActiveDrawer] = useState<ActiveDrawer>('none');
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
@@ -412,6 +418,113 @@ export default function App() {
     setIsEditMode(true);
   };
 
+  // Add new HTML Widget
+  const handleAddHtmlWidget = () => {
+    const newId = `widget-html-${Date.now()}`;
+    const newElement: DashboardElement = {
+      id: newId,
+      title: 'Executive HTML Integration',
+      type: 'html',
+      datasetId: currentDataset.id,
+      layout: { x: 32, y: 32, w: 560, h: 320 },
+      config: {
+        chartType: 'kpi',
+        htmlCode: `<div class="p-4 bg-gradient-to-br from-slate-900 via-blue-950/40 to-slate-900 border border-blue-500/30 rounded-lg shadow-xl text-slate-100 font-sans">
+  <div class="flex items-center justify-between border-b border-blue-500/20 pb-2.5 mb-3">
+    <div class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+      <h3 class="text-sm font-semibold tracking-wide text-blue-200">Executive Directive & Status</h3>
+    </div>
+    <span class="px-2 py-0.5 text-[10px] font-mono bg-blue-500/20 text-blue-300 border border-blue-500/40 rounded">Live Stream</span>
+  </div>
+  
+  <p class="text-xs text-slate-300 leading-relaxed mb-3.5">
+    Welcome to the unified analytics command deck. All metrics reflect sequential ordered data with schema-validated column types and currency formats.
+  </p>
+  
+  <div class="grid grid-cols-3 gap-2.5 font-mono text-xs">
+    <div class="p-2.5 bg-black/40 rounded border border-slate-800">
+      <div class="text-[10px] text-slate-400">DATASET STATUS</div>
+      <div class="text-emerald-400 font-bold mt-1">100% In Sync</div>
+    </div>
+    <div class="p-2.5 bg-black/40 rounded border border-slate-800">
+      <div class="text-[10px] text-slate-400">ORDERING</div>
+      <div class="text-sky-400 font-bold mt-1">Sequential Sorted</div>
+    </div>
+    <div class="p-2.5 bg-black/40 rounded border border-slate-800">
+      <div class="text-[10px] text-slate-400">FORMAT ENGINE</div>
+      <div class="text-purple-400 font-bold mt-1">Active (Strict)</div>
+    </div>
+  </div>
+</div>`,
+        htmlSandbox: false
+      },
+      customHtml: ''
+    };
+
+    const updatedElements = [...activePage.elements, newElement];
+    const updatedPages = project.pages.map((p, idx) =>
+      idx === project.activePageIndex ? { ...p, elements: updatedElements } : p
+    );
+
+    updateProjectWithHistory({
+      ...project,
+      pages: updatedPages
+    });
+
+    setSelectedElementId(newId);
+    setIsEditMode(true);
+    setHtmlModalElement(newElement);
+    setIsHtmlModalOpen(true);
+  };
+
+  const handleOpenHtmlModal = (element: DashboardElement) => {
+    setHtmlModalElement(element);
+    setIsHtmlModalOpen(true);
+  };
+
+  const handleSaveHtml = (code: string, isSandbox: boolean, title?: string) => {
+    if (!htmlModalElement) return;
+    const updated: DashboardElement = {
+      ...htmlModalElement,
+      title: title || htmlModalElement.title,
+      customHtml: code,
+      config: {
+        ...htmlModalElement.config,
+        htmlCode: code,
+        htmlSandbox: isSandbox
+      }
+    };
+    handleUpdateElement(updated);
+    setHtmlModalElement(updated);
+  };
+
+  const handleOpenDataTypeModal = (columnName?: string) => {
+    setDataTypeModalColumn(columnName);
+    setIsDataTypeModalOpen(true);
+  };
+
+  const handleConvertColumnDataType = (
+    columnName: string,
+    targetType: DataType,
+    options?: {
+      dateFormat?: string;
+      numberFormat?: 'standard' | 'currency' | 'percent' | 'compact';
+      decimalPlaces?: number;
+    }
+  ) => {
+    const updatedDataset = DataEngine.convertColumnDataType(
+      currentDataset,
+      columnName,
+      targetType,
+      options
+    );
+
+    setDatasets((prev) =>
+      prev.map((d) => (d.id === updatedDataset.id ? updatedDataset : d))
+    );
+  };
+
   // Add new page
   const handleAddPage = () => {
     const newPageNum = project.pages.length + 1;
@@ -547,6 +660,8 @@ export default function App() {
         onOpenSequentialModal={() => handleOpenSequentialModal()}
         onAddWidget={handleAddWidget}
         onAddMapWidget={handleAddMapWidget}
+        onAddHtmlWidget={handleAddHtmlWidget}
+        onOpenDataTypeModal={() => handleOpenDataTypeModal()}
         isEditMode={isEditMode}
         onToggleEditMode={() => setIsEditMode(!isEditMode)}
         activeCrossFilterCount={activeCrossFilterCount}
@@ -593,6 +708,7 @@ export default function App() {
             datasets={datasets}
             onSelectDataset={(id) => setActiveDatasetId(id)}
             onOpenImportData={() => setIsDataSourceModalOpen(true)}
+            onOpenDataTypeModal={(col) => handleOpenDataTypeModal(col)}
             onAddCalculatedField={(name, formula) => {
               const updatedCol = {
                 name,
@@ -646,6 +762,8 @@ export default function App() {
               setSelectedElementId(el.id);
             }}
             onOpenSequentialModal={(el) => handleOpenSequentialModal(el)}
+            onOpenHtmlModal={(el) => handleOpenHtmlModal(el)}
+            onOpenDataTypeModal={(col) => handleOpenDataTypeModal(col)}
           />
         )}
 
@@ -657,6 +775,8 @@ export default function App() {
             onClose={() => setSelectedElementId(null)}
             onUpdateElement={handleUpdateElement}
             onOpenSequentialModal={() => handleOpenSequentialModal(selectedElement)}
+            onOpenHtmlModal={() => handleOpenHtmlModal(selectedElement)}
+            onOpenDataTypeModal={(col) => handleOpenDataTypeModal(col)}
           />
         )}
 
@@ -799,6 +919,36 @@ export default function App() {
         element={sequentialModalElement || selectedElement}
         onApplyWidgetSort={handleApplyWidgetSort}
         onSortDatasetPermanently={handleSortDatasetPermanently}
+      />
+
+      {/* HTML Code Integration Editor Studio Modal */}
+      <HtmlEditorModal
+        isOpen={isHtmlModalOpen}
+        onClose={() => {
+          setIsHtmlModalOpen(false);
+          setHtmlModalElement(null);
+        }}
+        initialHtml={htmlModalElement?.config.htmlCode || htmlModalElement?.customHtml || ''}
+        elementTitle={htmlModalElement?.title || 'Custom HTML Integration'}
+        isSandbox={htmlModalElement?.config.htmlSandbox || false}
+        onSave={handleSaveHtml}
+      />
+
+      {/* Column Data Type & Display Format Engine Modal */}
+      <DataTypeFormatModal
+        isOpen={isDataTypeModalOpen}
+        onClose={() => {
+          setIsDataTypeModalOpen(false);
+          setDataTypeModalColumn(undefined);
+        }}
+        dataset={currentDataset}
+        initialColumnName={dataTypeModalColumn}
+        onConvertColumn={handleConvertColumnDataType}
+        onUpdateDataset={(updatedDs) => {
+          setDatasets((prev) =>
+            prev.map((d) => (d.id === updatedDs.id ? updatedDs : d))
+          );
+        }}
       />
     </div>
   );

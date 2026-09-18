@@ -1,4 +1,16 @@
-import { Dataset, FilterRule, AggregationType, ColumnSchema, DashboardElement, SortClause, SortType } from '../types/dashboard';
+import {
+  Dataset,
+  FilterRule,
+  AggregationType,
+  ColumnSchema,
+  DashboardElement,
+  SortClause,
+  SortType,
+  DataType,
+  TrendlineModelType,
+  TrendlineOptions,
+  TrendlineResult
+} from '../types/dashboard';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -14,6 +26,12 @@ export interface QueryOptions {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
   sequentialSort?: SortClause[];
+  // Trendline & Predictive Options
+  showTrendline?: boolean;
+  trendlineModel?: TrendlineModelType;
+  polynomialDegree?: number;
+  forecastPeriods?: number;
+  showConfidenceInterval?: boolean;
 }
 
 export interface AggregatedResult {
@@ -25,6 +43,7 @@ export interface AggregatedResult {
   }[];
   rawRows: Record<string, any>[];
   totalValue?: number;
+  trendline?: TrendlineResult;
 }
 
 export class DataEngine {
@@ -190,11 +209,612 @@ export class DataEngine {
       });
     }
 
+    // Automatic Predictive Trendline Generation
+    let trendlineResult: TrendlineResult | undefined = undefined;
+    if (options.showTrendline && entries.length >= 2) {
+      if (secondaryMeasure) {
+        // Scatter plot trendline where X = main measure, Y = secondary measure
+        const scatterPoints = entries
+          .map((e) => ({
+            x: Number(e.value) || 0,
+            y: Number(e.secValue) || 0,
+            label: e.category
+          }))
+          .filter((pt) => !isNaN(pt.x) && !isNaN(pt.y) && isFinite(pt.x) && isFinite(pt.y));
+
+        if (scatterPoints.length >= 2) {
+          trendlineResult = this.generateScatterTrendline(scatterPoints, {
+            model: options.trendlineModel || 'linear',
+            polynomialDegree: options.polynomialDegree || 2,
+            forecastPeriods: options.forecastPeriods || 0,
+            showConfidenceInterval: options.showConfidenceInterval
+          });
+        }
+      } else {
+        // Time-series or category trendline
+        trendlineResult = this.generateTimeSeriesTrendline(categories, mainSeriesData, {
+          model: options.trendlineModel || 'linear',
+          polynomialDegree: options.polynomialDegree || 2,
+          forecastPeriods: options.forecastPeriods || 0,
+          showConfidenceInterval: options.showConfidenceInterval
+        });
+      }
+    }
+
     return {
       categories,
       series,
       rawRows: filteredRows,
-      totalValue: totalVal
+      totalValue: totalVal,
+      trendline: trendlineResult
+    };
+  }
+
+  // ==========================================
+  // REGRESSION & PREDICTIVE TRENDLINE ENGINES
+  // ==========================================
+
+  // Format numerical coefficient for human-readable regression equations
+  public static formatCoeff(val: number): string {
+    if (isNaN(val) || !isFinite(val)) return '0';
+    const abs = Math.abs(val);
+    if (abs >= 1_000_000 || (abs < 0.001 && abs !== 0)) {
+      return val.toExponential(2);
+    }
+    if (abs >= 100) {
+      return val.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    }
+    if (abs >= 1) {
+      return Number(val.toFixed(2)).toString();
+    }
+    return Number(val.toFixed(3)).toString();
+  }
+
+  // Gauss-Jordan elimination solver for normal equations in polynomial regression
+  private static solveLinearSystem(A: number[][], B: number[]): number[] | null {
+    const n = B.length;
+    const M: number[][] = A.map((row, i) => [...row, B[i]]);
+
+    for (let i = 0; i < n; i++) {
+      let maxRow = i;
+      for (let k = i + 1; k < n; k++) {
+        if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) {
+          maxRow = k;
+        }
+      }
+
+      if (maxRow !== i) {
+        const tmp = M[i];
+        M[i] = M[maxRow];
+        M[maxRow] = tmp;
+      }
+
+      const pivot = M[i][i];
+      if (Math.abs(pivot) < 1e-12) {
+        return null; // Singular or ill-conditioned
+      }
+
+      for (let j = i; j <= n; j++) {
+        M[i][j] /= pivot;
+      }
+
+      for (let k = 0; k < n; k++) {
+        if (k !== i) {
+          const factor = M[k][i];
+          for (let j = i; j <= n; j++) {
+            M[k][j] -= factor * M[i][j];
+          }
+        }
+      }
+    }
+
+    return M.map((row) => row[n]);
+  }
+
+  // Linear Regression: y = mx + b
+  public static fitLinearRegression(points: { x: number; y: number }[]): {
+    slope: number;
+    intercept: number;
+    predict: (x: number) => number;
+    equation: string;
+    rSquared: number;
+    rmse: number;
+  } {
+    const N = points.length;
+    if (N < 2) {
+      const avgY = N === 1 ? points[0].y : 0;
+      return {
+        slope: 0,
+        intercept: avgY,
+        predict: () => avgY,
+        equation: `y = ${this.formatCoeff(avgY)}`,
+        rSquared: 0,
+        rmse: 0
+      };
+    }
+
+    const xMean = points.reduce((acc, p) => acc + p.x, 0) / N;
+    const yMean = points.reduce((acc, p) => acc + p.y, 0) / N;
+
+    let sxx = 0;
+    let sxy = 0;
+    let syy = 0;
+
+    for (const p of points) {
+      const dx = p.x - xMean;
+      const dy = p.y - yMean;
+      sxx += dx * dx;
+      sxy += dx * dy;
+      syy += dy * dy;
+    }
+
+    const slope = sxx > 1e-12 ? sxy / sxx : 0;
+    const intercept = yMean - slope * xMean;
+    const predict = (x: number) => slope * x + intercept;
+
+    let ssRes = 0;
+    for (const p of points) {
+      const pred = predict(p.x);
+      ssRes += Math.pow(p.y - pred, 2);
+    }
+
+    const rSquared = syy < 1e-12 ? 1.0 : Math.max(0, Math.min(1, 1 - ssRes / syy));
+    const rmse = Math.sqrt(ssRes / N);
+
+    const sign = intercept >= 0 ? '+' : '-';
+    const equation = `y = ${this.formatCoeff(slope)}x ${sign} ${this.formatCoeff(Math.abs(intercept))}`;
+
+    return { slope, intercept, predict, equation, rSquared, rmse };
+  }
+
+  // Exponential Regression: y = a * e^(bx)
+  public static fitExponentialRegression(points: { x: number; y: number }[]): {
+    a: number;
+    b: number;
+    offset: number;
+    predict: (x: number) => number;
+    equation: string;
+    rSquared: number;
+    rmse: number;
+  } {
+    const N = points.length;
+    if (N < 2) {
+      const avgY = N === 1 ? points[0].y : 0;
+      return {
+        a: avgY,
+        b: 0,
+        offset: 0,
+        predict: () => avgY,
+        equation: `y = ${this.formatCoeff(avgY)}`,
+        rSquared: 0,
+        rmse: 0
+      };
+    }
+
+    // If y values contain non-positive numbers, apply a positive translation offset
+    const minY = Math.min(...points.map((p) => p.y));
+    const offset = minY <= 0 ? Math.abs(minY) + 1 : 0;
+
+    const logPoints = points.map((p) => ({
+      x: p.x,
+      y: Math.log(p.y + offset)
+    }));
+
+    const linearFit = this.fitLinearRegression(logPoints);
+    const b = linearFit.slope;
+    const a = Math.exp(linearFit.intercept);
+
+    const predict = (x: number) => {
+      const val = a * Math.exp(b * x) - offset;
+      return isFinite(val) ? val : points[points.length - 1].y;
+    };
+
+    let ssRes = 0;
+    let ssTot = 0;
+    const yMean = points.reduce((acc, p) => acc + p.y, 0) / N;
+
+    for (const p of points) {
+      const pred = predict(p.x);
+      ssRes += Math.pow(p.y - pred, 2);
+      ssTot += Math.pow(p.y - yMean, 2);
+    }
+
+    const rSquared = ssTot < 1e-12 ? 1.0 : Math.max(0, Math.min(1, 1 - ssRes / ssTot));
+    const rmse = Math.sqrt(ssRes / N);
+
+    let equation = `y = ${this.formatCoeff(a)} · e^(${this.formatCoeff(b)}x)`;
+    if (offset > 0) {
+      equation += ` - ${this.formatCoeff(offset)}`;
+    }
+
+    return { a, b, offset, predict, equation, rSquared, rmse };
+  }
+
+  // Polynomial Regression: y = c2*x^2 + c1*x + c0 (or degree 3)
+  public static fitPolynomialRegression(points: { x: number; y: number }[], degree: number = 2): {
+    coefficients: number[];
+    predict: (x: number) => number;
+    equation: string;
+    rSquared: number;
+    rmse: number;
+  } {
+    const N = points.length;
+    const deg = Math.min(Math.max(2, degree), Math.max(1, N - 1));
+
+    if (N < 2 || deg < 2) {
+      const lin = this.fitLinearRegression(points);
+      return {
+        coefficients: [lin.intercept, lin.slope],
+        predict: lin.predict,
+        equation: lin.equation,
+        rSquared: lin.rSquared,
+        rmse: lin.rmse
+      };
+    }
+
+    // Standardize x coordinates: u = (x - meanX) / sX for numerical conditioning
+    const xMean = points.reduce((acc, p) => acc + p.x, 0) / N;
+    let sxx = points.reduce((acc, p) => acc + Math.pow(p.x - xMean, 2), 0);
+    const sX = Math.sqrt(sxx / N) || 1;
+
+    const uPoints = points.map((p) => ({
+      u: (p.x - xMean) / sX,
+      y: p.y
+    }));
+
+    // Build normal equations: (deg + 1) x (deg + 1)
+    const dim = deg + 1;
+    const A: number[][] = Array.from({ length: dim }, () => Array(dim).fill(0));
+    const B: number[] = Array(dim).fill(0);
+
+    for (let r = 0; r < dim; r++) {
+      for (let c = 0; c < dim; c++) {
+        let sumPow = 0;
+        const power = r + c;
+        for (const p of uPoints) {
+          sumPow += Math.pow(p.u, power);
+        }
+        A[r][c] = sumPow;
+      }
+
+      let sumY = 0;
+      for (const p of uPoints) {
+        sumY += Math.pow(p.u, r) * p.y;
+      }
+      B[r] = sumY;
+    }
+
+    const uCoeffs = this.solveLinearSystem(A, B);
+    if (!uCoeffs) {
+      // Fallback to linear if matrix is singular
+      const lin = this.fitLinearRegression(points);
+      return {
+        coefficients: [lin.intercept, lin.slope],
+        predict: lin.predict,
+        equation: lin.equation,
+        rSquared: lin.rSquared,
+        rmse: lin.rmse
+      };
+    }
+
+    const predict = (x: number) => {
+      const u = (x - xMean) / sX;
+      let res = 0;
+      for (let i = 0; i < uCoeffs.length; i++) {
+        res += uCoeffs[i] * Math.pow(u, i);
+      }
+      return isFinite(res) ? res : points[points.length - 1].y;
+    };
+
+    let ssRes = 0;
+    let ssTot = 0;
+    const yMean = points.reduce((acc, p) => acc + p.y, 0) / N;
+
+    for (const p of points) {
+      const pred = predict(p.x);
+      ssRes += Math.pow(p.y - pred, 2);
+      ssTot += Math.pow(p.y - yMean, 2);
+    }
+
+    const rSquared = ssTot < 1e-12 ? 1.0 : Math.max(0, Math.min(1, 1 - ssRes / ssTot));
+    const rmse = Math.sqrt(ssRes / N);
+
+    // Convert standardized coefficients to natural coordinates for human-readable equation
+    const alpha = 1 / sX;
+    const beta = -xMean / sX;
+
+    let equation = '';
+    if (deg === 2) {
+      const [c0, c1, c2] = uCoeffs;
+      const a2 = c2 * Math.pow(alpha, 2);
+      const a1 = c1 * alpha + 2 * c2 * alpha * beta;
+      const a0 = c0 + c1 * beta + c2 * Math.pow(beta, 2);
+      const s1 = a1 >= 0 ? '+' : '-';
+      const s0 = a0 >= 0 ? '+' : '-';
+      equation = `y = ${this.formatCoeff(a2)}x² ${s1} ${this.formatCoeff(Math.abs(a1))}x ${s0} ${this.formatCoeff(Math.abs(a0))}`;
+    } else {
+      const [c0, c1, c2, c3] = uCoeffs;
+      const a3 = c3 * Math.pow(alpha, 3);
+      const a2 = c2 * Math.pow(alpha, 2) + 3 * c3 * Math.pow(alpha, 2) * beta;
+      const a1 = c1 * alpha + 2 * c2 * alpha * beta + 3 * c3 * alpha * Math.pow(beta, 2);
+      const a0 = c0 + c1 * beta + c2 * Math.pow(beta, 2) + c3 * Math.pow(beta, 3);
+      equation = `y = ${this.formatCoeff(a3)}x³ + ${this.formatCoeff(a2)}x² + ${this.formatCoeff(a1)}x + ${this.formatCoeff(a0)}`;
+    }
+
+    return { coefficients: uCoeffs, predict, equation, rSquared, rmse };
+  }
+
+  // Extrapolate chronological and sequential category labels for predictive forecasting
+  public static extrapolateCategoryLabels(categories: string[], periods: number): string[] {
+    if (periods <= 0 || categories.length === 0) return [...categories];
+    const extended = [...categories];
+    const last = categories[categories.length - 1];
+
+    // Pattern 1: YYYY-Q# (e.g. 2026-Q2 or 2026 Q2)
+    const quarterMatch = last.match(/^(\d{4})[-/ ]?Q([1-4])$/i);
+    if (quarterMatch) {
+      let year = parseInt(quarterMatch[1], 10);
+      let q = parseInt(quarterMatch[2], 10);
+      for (let p = 1; p <= periods; p++) {
+        q++;
+        if (q > 4) {
+          q = 1;
+          year++;
+        }
+        extended.push(`${year}-Q${q} (Fcst)`);
+      }
+      return extended;
+    }
+
+    // Pattern 2: YYYY-MM or YYYY/MM (e.g. 2026-04)
+    const monthMatch = last.match(/^(\d{4})[-/](\d{1,2})$/);
+    if (monthMatch) {
+      let year = parseInt(monthMatch[1], 10);
+      let m = parseInt(monthMatch[2], 10);
+      for (let p = 1; p <= periods; p++) {
+        m++;
+        if (m > 12) {
+          m = 1;
+          year++;
+        }
+        const mStr = m < 10 ? `0${m}` : `${m}`;
+        extended.push(`${year}-${mStr} (Fcst)`);
+      }
+      return extended;
+    }
+
+    // Pattern 3: ISO Date (YYYY-MM-DD)
+    const dateMatch = last.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateMatch && categories.length >= 2) {
+      const prev = categories[categories.length - 2];
+      const tLast = new Date(last).getTime();
+      const tPrev = new Date(prev).getTime();
+      const diffMs = !isNaN(tLast) && !isNaN(tPrev) && tLast > tPrev ? tLast - tPrev : 86400000;
+      for (let p = 1; p <= periods; p++) {
+        const nextDate = new Date(tLast + diffMs * p);
+        const yyyy = nextDate.getFullYear();
+        const mm = String(nextDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(nextDate.getDate()).padStart(2, '0');
+        extended.push(`${yyyy}-${mm}-${dd} (Fcst)`);
+      }
+      return extended;
+    }
+
+    // Pattern 4: Pure 4-digit Year (e.g. 2025, 2026)
+    const yearOnlyMatch = last.match(/^(\d{4})$/);
+    if (yearOnlyMatch) {
+      let yr = parseInt(yearOnlyMatch[1], 10);
+      for (let p = 1; p <= periods; p++) {
+        yr++;
+        extended.push(`${yr} (Fcst)`);
+      }
+      return extended;
+    }
+
+    // Fallback: Label with increment
+    for (let p = 1; p <= periods; p++) {
+      extended.push(`+${p} Period (Fcst)`);
+    }
+
+    return extended;
+  }
+
+  // Generate predictive trendline for time-series / ordinal category charts (line, area, bar)
+  public static generateTimeSeriesTrendline(
+    categories: string[],
+    values: (number | null)[],
+    options?: TrendlineOptions
+  ): TrendlineResult {
+    const model: TrendlineModelType = options?.model || 'linear';
+    const forecastPeriods = Math.max(0, Math.min(12, options?.forecastPeriods || 0));
+    const polynomialDegree = options?.polynomialDegree || 2;
+    const showConfidence = options?.showConfidenceInterval ?? false;
+
+    // Filter valid non-null numeric pairs
+    const validPoints = categories
+      .map((cat, idx) => ({ x: idx, y: values[idx] }))
+      .filter((pt): pt is { x: number; y: number } => pt.y !== null && !isNaN(pt.y) && isFinite(pt.y));
+
+    if (validPoints.length < 2) {
+      return {
+        model,
+        equation: 'Need ≥ 2 data points',
+        rSquared: 0,
+        rmse: 0,
+        predictedValues: values,
+        extendedCategories: categories,
+        trendlineData: values,
+        forecastStartIndex: categories.length
+      };
+    }
+
+    // Fit requested regression model
+    let fitResult: {
+      predict: (x: number) => number;
+      equation: string;
+      rSquared: number;
+      rmse: number;
+    };
+
+    if (model === 'exponential') {
+      fitResult = this.fitExponentialRegression(validPoints);
+    } else if (model === 'polynomial') {
+      fitResult = this.fitPolynomialRegression(validPoints, polynomialDegree);
+    } else {
+      fitResult = this.fitLinearRegression(validPoints);
+    }
+
+    const extendedCategories = this.extrapolateCategoryLabels(categories, forecastPeriods);
+    const totalCount = extendedCategories.length;
+
+    // Predictions
+    const predictedValues: (number | null)[] = [];
+    const trendlineData: (number | null)[] = [];
+    const forecastData: (number | null)[] = Array(categories.length).fill(null);
+    const upperConfidence: (number | null)[] = [];
+    const lowerConfidence: (number | null)[] = [];
+    const confidenceDifference: (number | null)[] = [];
+
+    // Residual standard error for confidence interval
+    const N = validPoints.length;
+    const pCount = model === 'polynomial' ? polynomialDegree + 1 : 2;
+    let ssRes = 0;
+    for (const p of validPoints) {
+      ssRes += Math.pow(p.y - fitResult.predict(p.x), 2);
+    }
+    const sigma = Math.sqrt(ssRes / Math.max(1, N - pCount));
+    const xMean = validPoints.reduce((acc, p) => acc + p.x, 0) / N;
+    let sxx = validPoints.reduce((acc, p) => acc + Math.pow(p.x - xMean, 2), 0) || 1;
+
+    for (let i = 0; i < totalCount; i++) {
+      const yHat = fitResult.predict(i);
+      const roundedYHat = Number(yHat.toFixed(2));
+      trendlineData.push(roundedYHat);
+
+      if (i < categories.length) {
+        predictedValues.push(roundedYHat);
+      } else {
+        forecastData.push(roundedYHat);
+      }
+
+      if (showConfidence) {
+        const se = sigma * Math.sqrt(1 + 1 / N + Math.pow(i - xMean, 2) / sxx);
+        const upper = Number((yHat + 1.96 * se).toFixed(2));
+        const lower = Number((yHat - 1.96 * se).toFixed(2));
+        upperConfidence.push(upper);
+        lowerConfidence.push(lower);
+        confidenceDifference.push(Number(Math.max(0, upper - lower).toFixed(2)));
+      }
+    }
+
+    return {
+      model,
+      equation: fitResult.equation,
+      rSquared: Number(fitResult.rSquared.toFixed(3)),
+      rmse: Number(fitResult.rmse.toFixed(2)),
+      predictedValues,
+      extendedCategories,
+      trendlineData,
+      forecastStartIndex: categories.length,
+      forecastData: forecastPeriods > 0 ? forecastData : undefined,
+      upperConfidence: showConfidence ? upperConfidence : undefined,
+      lowerConfidence: showConfidence ? lowerConfidence : undefined,
+      confidenceDifference: showConfidence ? confidenceDifference : undefined
+    };
+  }
+
+  // Generate predictive trendline for scatter plot visualizations
+  public static generateScatterTrendline(
+    points: { x: number; y: number; label?: string }[],
+    options?: TrendlineOptions
+  ): TrendlineResult {
+    const model: TrendlineModelType = options?.model || 'linear';
+    const forecastPeriods = Math.max(0, Math.min(10, options?.forecastPeriods || 0));
+    const polynomialDegree = options?.polynomialDegree || 2;
+    const showConfidence = options?.showConfidenceInterval ?? false;
+
+    // Filter valid points and sort by x coordinate
+    const sorted = points
+      .filter((p) => !isNaN(p.x) && !isNaN(p.y) && isFinite(p.x) && isFinite(p.y))
+      .sort((a, b) => a.x - b.x);
+
+    if (sorted.length < 2) {
+      return {
+        model,
+        equation: 'Need ≥ 2 scatter points',
+        rSquared: 0,
+        rmse: 0,
+        predictedValues: sorted.map((p) => p.y),
+        extendedCategories: [],
+        trendlineData: [],
+        forecastStartIndex: 0
+      };
+    }
+
+    // Fit model
+    let fitResult: {
+      predict: (x: number) => number;
+      equation: string;
+      rSquared: number;
+      rmse: number;
+    };
+
+    if (model === 'exponential') {
+      fitResult = this.fitExponentialRegression(sorted);
+    } else if (model === 'polynomial') {
+      fitResult = this.fitPolynomialRegression(sorted, polynomialDegree);
+    } else {
+      fitResult = this.fitLinearRegression(sorted);
+    }
+
+    const xMin = sorted[0].x;
+    const xMax = sorted[sorted.length - 1].x;
+    const xRange = xMax - xMin || 1;
+    // If forecast requested, extrapolate xMax forward
+    const xMaxExtended = forecastPeriods > 0 ? xMax + (xRange / sorted.length) * forecastPeriods : xMax;
+
+    // Sample dense smooth points along the domain for continuous curve rendering
+    const sampleCount = 60;
+    const scatterTrendlineData: [number, number][] = [];
+    const scatterUpperConfidence: [number, number][] = [];
+    const scatterLowerConfidence: [number, number][] = [];
+
+    const N = sorted.length;
+    const pCount = model === 'polynomial' ? polynomialDegree + 1 : 2;
+    let ssRes = 0;
+    for (const p of sorted) {
+      ssRes += Math.pow(p.y - fitResult.predict(p.x), 2);
+    }
+    const sigma = Math.sqrt(ssRes / Math.max(1, N - pCount));
+    const xMean = sorted.reduce((acc, p) => acc + p.x, 0) / N;
+    let sxx = sorted.reduce((acc, p) => acc + Math.pow(p.x - xMean, 2), 0) || 1;
+
+    for (let s = 0; s <= sampleCount; s++) {
+      const curX = xMin + (xMaxExtended - xMin) * (s / sampleCount);
+      const curY = fitResult.predict(curX);
+      scatterTrendlineData.push([Number(curX.toFixed(2)), Number(curY.toFixed(2))]);
+
+      if (showConfidence) {
+        const se = sigma * Math.sqrt(1 + 1 / N + Math.pow(curX - xMean, 2) / sxx);
+        scatterUpperConfidence.push([Number(curX.toFixed(2)), Number((curY + 1.96 * se).toFixed(2))]);
+        scatterLowerConfidence.push([Number(curX.toFixed(2)), Number((curY - 1.96 * se).toFixed(2))]);
+      }
+    }
+
+    const predictedValues = sorted.map((p) => Number(fitResult.predict(p.x).toFixed(2)));
+
+    return {
+      model,
+      equation: fitResult.equation,
+      rSquared: Number(fitResult.rSquared.toFixed(3)),
+      rmse: Number(fitResult.rmse.toFixed(2)),
+      predictedValues,
+      extendedCategories: [],
+      trendlineData: predictedValues,
+      scatterTrendlineData,
+      forecastStartIndex: sorted.length,
+      scatterUpperConfidence: showConfidence ? scatterUpperConfidence : undefined,
+      scatterLowerConfidence: showConfidence ? scatterLowerConfidence : undefined
     };
   }
 
@@ -253,6 +873,505 @@ export class DataEngine {
     }
 
     return `${prefix}${formatted}${suffix}`;
+  }
+
+  // Detect if numeric values in a column represent timestamps or serial dates
+  public static detectNumericDateType(values: any[]): 'excel_serial' | 'unix_ms' | 'unix_sec' | 'yyyymmdd' | 'none' {
+    const validNums = values
+      .map((v) => Number(v))
+      .filter((n) => !isNaN(n) && n > 0)
+      .slice(0, 50);
+
+    if (validNums.length === 0) return 'none';
+
+    // 1. Unix milliseconds (e.g. 1704067200000 -> ~1.7e12, years 2001 to 2065)
+    if (validNums.every((n) => n > 1_000_000_000_000 && n < 3_000_000_000_000)) {
+      return 'unix_ms';
+    }
+
+    // 2. Unix seconds (e.g. 1704067200 -> ~1.7e9, years 2001 to 2065)
+    if (validNums.every((n) => n > 1_000_000_000 && n < 3_000_000_000)) {
+      return 'unix_sec';
+    }
+
+    // 3. Integer dates YYYYMMDD (e.g. 19700101 to 20991231)
+    if (validNums.every((n) => {
+      if (n < 19700101 || n > 20991231) return false;
+      const s = String(Math.floor(n));
+      const m = parseInt(s.slice(4, 6), 10);
+      const d = parseInt(s.slice(6, 8), 10);
+      return m >= 1 && m <= 12 && d >= 1 && d <= 31;
+    })) {
+      return 'yyyymmdd';
+    }
+
+    // 4. Excel serial dates (e.g. 25000 to 65000, roughly 1968 to 2077)
+    if (validNums.every((n) => n >= 25000 && n <= 65000)) {
+      return 'excel_serial';
+    }
+
+    return 'none';
+  }
+
+  // Universal date parser supporting Excel serial dates, Unix timestamps, YYYYMMDD integers, ISO strings, and slash/dash strings
+  public static parseAnyDate(val: any, sourceType?: string): Date | null {
+    if (val === null || val === undefined || val === '') return null;
+    if (val instanceof Date && !isNaN(val.getTime())) return val;
+
+    const numVal = Number(val);
+    const isNum = !isNaN(numVal) && String(val).trim() !== '';
+
+    if (isNum) {
+      const detected = (sourceType && sourceType !== 'auto') ? sourceType : DataEngine.detectNumericDateType([numVal]);
+
+      // Excel serial date (days since Dec 30, 1899)
+      if (detected === 'excel_serial' || (numVal >= 25000 && numVal <= 65000 && sourceType !== 'unix_sec')) {
+        const utcDays = Math.floor(numVal - 25569);
+        const utcValue = utcDays * 86400 * 1000;
+        const fractionalDay = (numVal - Math.floor(numVal)) * 86400 * 1000;
+        const d = new Date(utcValue + fractionalDay);
+        if (!isNaN(d.getTime())) return d;
+      }
+
+      // Unix milliseconds
+      if (detected === 'unix_ms' || numVal > 1_000_000_000_000) {
+        const d = new Date(numVal);
+        if (!isNaN(d.getTime())) return d;
+      }
+
+      // Unix seconds
+      if (detected === 'unix_sec' || (numVal > 1_000_000_000 && numVal <= 3_000_000_000)) {
+        const d = new Date(numVal * 1000);
+        if (!isNaN(d.getTime())) return d;
+      }
+
+      // YYYYMMDD integer
+      if (detected === 'yyyymmdd' || (numVal >= 19700101 && numVal <= 20991231)) {
+        const s = String(Math.floor(numVal));
+        const y = parseInt(s.slice(0, 4), 10);
+        const m = parseInt(s.slice(4, 6), 10) - 1;
+        const day = parseInt(s.slice(6, 8), 10);
+        const d = new Date(y, m, day);
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+
+    const str = String(val).trim();
+
+    // Specific Regex for DD/MM/YYYY or DD-MM-YYYY if indicated or common
+    if (sourceType === 'DD/MM/YYYY' || sourceType === 'DD-MM-YYYY' || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(str)) {
+      const match = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+      if (match) {
+        let first = parseInt(match[1], 10);
+        let second = parseInt(match[2], 10);
+        let year = parseInt(match[3], 10);
+
+        // If first > 12, it MUST be day (DD/MM/YYYY)
+        if (first > 12) {
+          const d = new Date(year, second - 1, first);
+          if (!isNaN(d.getTime())) return d;
+        } else if (sourceType === 'DD/MM/YYYY' || sourceType === 'DD-MM-YYYY') {
+          const d = new Date(year, second - 1, first);
+          if (!isNaN(d.getTime())) return d;
+        } else {
+          // Standard US fallback (MM/DD/YYYY)
+          const d = new Date(year, first - 1, second);
+          if (!isNaN(d.getTime())) return d;
+        }
+      }
+    }
+
+    // Standard JavaScript date parser
+    const parsed = Date.parse(str);
+    if (!isNaN(parsed)) {
+      return new Date(parsed);
+    }
+
+    return null;
+  }
+
+  // Format a Date object into a readable date string
+  public static formatDate(date: Date | null, formatPattern: string = 'YYYY-MM-DD'): string {
+    if (!date || isNaN(date.getTime())) return '';
+
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const seconds = date.getSeconds();
+
+    const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthNamesLong = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const quarter = Math.ceil(month / 3);
+
+    const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+
+    switch (formatPattern) {
+      case 'MM/DD/YYYY':
+        return `${pad(month)}/${pad(day)}/${year}`;
+      case 'DD/MM/YYYY':
+        return `${pad(day)}/${pad(month)}/${year}`;
+      case 'DD-MM-YYYY':
+        return `${pad(day)}-${pad(month)}-${year}`;
+      case 'MM-DD-YYYY':
+        return `${pad(month)}-${pad(day)}-${year}`;
+      case 'YYYY/MM/DD':
+        return `${year}/${pad(month)}/${pad(day)}`;
+      case 'MMM DD, YYYY':
+      case 'date_long':
+        return `${monthNamesShort[month - 1]} ${pad(day)}, ${year}`;
+      case 'MMMM DD, YYYY':
+        return `${monthNamesLong[month - 1]} ${pad(day)}, ${year}`;
+      case 'MMM YYYY':
+        return `${monthNamesShort[month - 1]} ${year}`;
+      case 'YYYY-Q#':
+      case 'Q# YYYY':
+        return `Q${quarter} ${year}`;
+      case 'YYYY-MM-DD HH:mm':
+        return `${year}-${pad(month)}-${pad(day)} ${pad(hours)}:${pad(minutes)}`;
+      case 'HH:mm:ss':
+        return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+      case 'YYYY-MM-DD':
+      case 'date':
+      case 'date_iso':
+      default:
+        return `${year}-${pad(month)}-${pad(day)}`;
+    }
+  }
+
+  // Parse a formatted currency, percentage, or grouped number string into pure float
+  public static parseNumericString(val: any): number | null {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'number') return isNaN(val) ? null : val;
+
+    const str = String(val).trim();
+    if (!str) return null;
+
+    // Clean currency symbols, commas, and percentage marks
+    const isPercentage = str.endsWith('%');
+    const cleaned = str.replace(/[$€£¥₹\s,]/g, '').replace(/%$/, '');
+    const num = Number(cleaned);
+
+    if (isNaN(num)) return null;
+    return isPercentage ? num / 100 : num;
+  }
+
+  // Universal value formatter based on ColumnSchema
+  public static formatValue(val: any, schema?: ColumnSchema): string {
+    if (val === null || val === undefined) return '';
+
+    if (!schema) {
+      return String(val);
+    }
+
+    // Date formatting (including numbers acting as dates)
+    if (schema.type === 'date' || schema.format === 'date' || schema.dateFormat) {
+      const d = DataEngine.parseAnyDate(val, schema.sourceDataType);
+      if (d) {
+        return DataEngine.formatDate(d, schema.dateFormat || 'YYYY-MM-DD');
+      }
+      return String(val);
+    }
+
+    // Number formatting
+    if (
+      schema.type === 'number' ||
+      schema.format === 'currency' ||
+      schema.format === 'percent' ||
+      schema.format === 'integer' ||
+      schema.format === 'decimal' ||
+      schema.numberFormat
+    ) {
+      const num = typeof val === 'number' ? val : DataEngine.parseNumericString(val);
+      if (num === null || isNaN(num)) return String(val);
+
+      const symbol = schema.currencySymbol || '$';
+      const decimals = schema.decimalPlaces !== undefined ? schema.decimalPlaces : 2;
+
+      if (schema.format === 'currency' || schema.numberFormat === 'currency') {
+        return `${symbol}${num.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+      }
+      if (schema.format === 'percent' || schema.numberFormat === 'percent') {
+        const pctVal = Math.abs(num) <= 1 && num !== 0 ? num * 100 : num;
+        return `${pctVal.toFixed(schema.decimalPlaces !== undefined ? schema.decimalPlaces : 1)}%`;
+      }
+      if (schema.format === 'integer' || schema.numberFormat === 'integer') {
+        return Math.round(num).toLocaleString();
+      }
+      if (schema.format === 'decimal' || schema.numberFormat === 'decimal') {
+        return num.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+      }
+      if (schema.numberFormat === 'compact') {
+        return DataEngine.formatNumber(num);
+      }
+      return num.toLocaleString();
+    }
+
+    // Boolean formatting
+    if (schema.type === 'boolean') {
+      return val ? 'Yes' : 'No';
+    }
+
+    // String formatting
+    if (schema.format === 'uppercase') {
+      return String(val).toUpperCase();
+    }
+    if (schema.format === 'lowercase') {
+      return String(val).toLowerCase();
+    }
+    if (schema.format === 'capitalize') {
+      const s = String(val);
+      return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    }
+
+    return String(val);
+  }
+
+  // Diagnostic Audit: Inspect all columns in a dataset and identify misidentified data types
+  public static inspectDatasetTypes(dataset: Dataset): {
+    columnName: string;
+    currentType: DataType;
+    suggestedType: DataType;
+    sourceDataType?: 'excel_serial' | 'unix_ms' | 'unix_sec' | 'yyyymmdd' | 'iso_string' | 'auto';
+    suggestedFormat?: string;
+    reason: string;
+    sampleValues: any[];
+    autoFixOptions: {
+      format?: string;
+      dateFormat?: string;
+      numberFormat?: string;
+      sourceDataType?: 'excel_serial' | 'unix_ms' | 'unix_sec' | 'yyyymmdd' | 'iso_string' | 'auto';
+      mutateRows?: boolean;
+    };
+  }[] {
+    const issues: any[] = [];
+
+    for (const col of dataset.columns) {
+      const samples = dataset.data
+        .map((r) => r[col.name])
+        .filter((v) => v !== null && v !== undefined && String(v).trim() !== '')
+        .slice(0, 50);
+
+      if (samples.length === 0) continue;
+
+      // 1. Column is currently 'number', but values are actually numeric dates!
+      if (col.type === 'number') {
+        const detectedNumericDate = DataEngine.detectNumericDateType(samples);
+        if (detectedNumericDate !== 'none') {
+          let reason = '';
+          if (detectedNumericDate === 'excel_serial') {
+            reason = 'Excel serial date numbers (e.g. 45000+ = 2023-2025). Can be converted into readable dates.';
+          } else if (detectedNumericDate === 'unix_sec') {
+            reason = 'Unix timestamps in seconds. Can be converted into standard calendar dates.';
+          } else if (detectedNumericDate === 'unix_ms') {
+            reason = 'Unix timestamps in milliseconds. Can be converted into standard calendar dates.';
+          } else if (detectedNumericDate === 'yyyymmdd') {
+            reason = 'Integer formatted as YYYYMMDD (e.g. 20240115). Can be converted into standard dates.';
+          }
+
+          issues.push({
+            columnName: col.name,
+            currentType: 'number' as DataType,
+            suggestedType: 'date' as DataType,
+            sourceDataType: detectedNumericDate,
+            suggestedFormat: 'YYYY-MM-DD',
+            reason,
+            sampleValues: samples.slice(0, 3),
+            autoFixOptions: {
+              dateFormat: 'YYYY-MM-DD',
+              sourceDataType: detectedNumericDate,
+              mutateRows: true
+            }
+          });
+          continue;
+        }
+      }
+
+      // 2. Column is currently 'string', but values are parseable numbers (e.g. "$1,250", "45%", "99.5")
+      if (col.type === 'string') {
+        // Check if values are actually dates
+        const dateParsedSamples = samples.map((s) => DataEngine.parseAnyDate(s));
+        const validDatesCount = dateParsedSamples.filter((d) => d !== null).length;
+
+        if (validDatesCount === samples.length && samples.length >= 2) {
+          issues.push({
+            columnName: col.name,
+            currentType: 'string' as DataType,
+            suggestedType: 'date' as DataType,
+            sourceDataType: 'iso_string',
+            suggestedFormat: 'YYYY-MM-DD',
+            reason: 'Text strings containing calendar dates. Converting to date unlocks time grouping and trends.',
+            sampleValues: samples.slice(0, 3),
+            autoFixOptions: {
+              dateFormat: 'YYYY-MM-DD',
+              sourceDataType: 'iso_string',
+              mutateRows: true
+            }
+          });
+          continue;
+        }
+
+        // Check if values are boolean strings
+        const isAllBooleans = samples.every((s) => {
+          const str = String(s).toLowerCase().trim();
+          return ['true', 'false', 'yes', 'no', '1', '0', 'y', 'n'].includes(str);
+        });
+
+        if (isAllBooleans && samples.length >= 2) {
+          issues.push({
+            columnName: col.name,
+            currentType: 'string' as DataType,
+            suggestedType: 'boolean' as DataType,
+            reason: 'Boolean truth flags stored as text (Yes/No, True/False).',
+            sampleValues: samples.slice(0, 3),
+            autoFixOptions: {
+              mutateRows: true
+            }
+          });
+          continue;
+        }
+
+        // Check if values are formatted currency or numeric strings
+        const numParsedSamples = samples.map((s) => DataEngine.parseNumericString(s));
+        const validNumsCount = numParsedSamples.filter((n) => n !== null).length;
+
+        if (validNumsCount === samples.length && samples.length >= 2) {
+          const hasCurrencySymbol = samples.some((s) => /[$€£¥₹]/.test(String(s)));
+          const hasPercentSymbol = samples.some((s) => String(s).includes('%'));
+
+          issues.push({
+            columnName: col.name,
+            currentType: 'string' as DataType,
+            suggestedType: 'number' as DataType,
+            suggestedFormat: hasCurrencySymbol ? 'currency' : hasPercentSymbol ? 'percent' : 'decimal',
+            reason: hasCurrencySymbol
+              ? 'Currency figures formatted as text strings. Converting to measure enables SUM/AVG aggregation.'
+              : hasPercentSymbol
+              ? 'Percentages formatted as text strings. Converting enables charting calculations.'
+              : 'Numeric figures stored as strings. Converting to measure enables mathematical aggregation.',
+            sampleValues: samples.slice(0, 3),
+            autoFixOptions: {
+              format: hasCurrencySymbol ? 'currency' : hasPercentSymbol ? 'percent' : 'decimal',
+              numberFormat: hasCurrencySymbol ? 'currency' : hasPercentSymbol ? 'percent' : 'decimal',
+              mutateRows: true
+            }
+          });
+        }
+      }
+    }
+
+    return issues;
+  }
+
+  // Convert column data type and formats, optionally mutating row data values and recording diagnostics
+  public static convertColumnDataType(
+    dataset: Dataset,
+    columnName: string,
+    targetType: DataType,
+    options?: {
+      format?: string;
+      dateFormat?: string;
+      numberFormat?: string;
+      currencySymbol?: string;
+      decimalPlaces?: number;
+      thousandSeparator?: string;
+      sourceDataType?: 'excel_serial' | 'unix_ms' | 'unix_sec' | 'yyyymmdd' | 'iso_string' | 'auto';
+      mutateRows?: boolean;
+      fallbackMode?: 'keep' | 'null' | 'default';
+    }
+  ): Dataset {
+    const colIndex = dataset.columns.findIndex((c) => c.name === columnName);
+    if (colIndex === -1) return dataset;
+
+    const existingCol = dataset.columns[colIndex];
+    let newCategory = existingCol.category;
+    if (targetType === 'date') newCategory = 'time';
+    else if (targetType === 'number') newCategory = 'measure';
+    else if (targetType === 'string' || targetType === 'boolean') newCategory = 'dimension';
+
+    const updatedCol: ColumnSchema = {
+      ...existingCol,
+      type: targetType,
+      category: newCategory,
+      format: options?.format || (targetType === 'date' ? 'date' : existingCol.format),
+      dateFormat: options?.dateFormat,
+      numberFormat: options?.numberFormat,
+      currencySymbol: options?.currencySymbol,
+      decimalPlaces: options?.decimalPlaces,
+      thousandSeparator: options?.thousandSeparator,
+      sourceDataType: options?.sourceDataType
+    };
+
+    const newColumns = [...dataset.columns];
+    newColumns[colIndex] = updatedCol;
+
+    let updatedData = dataset.data;
+    if (options?.mutateRows) {
+      updatedData = dataset.data.map((row) => {
+        const rawVal = row[columnName];
+        let transformedVal = rawVal;
+
+        if (targetType === 'date') {
+          const parsed = DataEngine.parseAnyDate(rawVal, options.sourceDataType);
+          if (parsed) {
+            transformedVal = DataEngine.formatDate(parsed, options.dateFormat || 'YYYY-MM-DD');
+          } else if (options.fallbackMode === 'null') {
+            transformedVal = null;
+          } else if (options.fallbackMode === 'default') {
+            transformedVal = DataEngine.formatDate(new Date(), options.dateFormat || 'YYYY-MM-DD');
+          }
+        } else if (targetType === 'number') {
+          const parsed = DataEngine.parseNumericString(rawVal);
+          if (parsed !== null && !isNaN(parsed)) {
+            transformedVal = parsed;
+          } else if (options.fallbackMode === 'null') {
+            transformedVal = null;
+          } else if (options.fallbackMode === 'default') {
+            transformedVal = 0;
+          }
+        } else if (targetType === 'string') {
+          transformedVal = String(rawVal ?? '');
+        } else if (targetType === 'boolean') {
+          const s = String(rawVal ?? '').toLowerCase().trim();
+          transformedVal = s === 'true' || s === 'yes' || s === '1' || s === 'y';
+        }
+
+        return {
+          ...row,
+          [columnName]: transformedVal
+        };
+      });
+    }
+
+    return {
+      ...dataset,
+      columns: newColumns,
+      data: updatedData,
+      lastRefreshed: 'Just now'
+    };
+  }
+
+  // Batch convert multiple columns in one call (e.g. for "Auto-Fix All Anomalies")
+  public static batchConvertDatasetTypes(
+    dataset: Dataset,
+    conversions: {
+      columnName: string;
+      targetType: DataType;
+      options?: {
+        format?: string;
+        dateFormat?: string;
+        numberFormat?: string;
+        sourceDataType?: 'excel_serial' | 'unix_ms' | 'unix_sec' | 'yyyymmdd' | 'iso_string' | 'auto';
+        mutateRows?: boolean;
+      };
+    }[]
+  ): Dataset {
+    let current = dataset;
+    for (const item of conversions) {
+      current = DataEngine.convertColumnDataType(current, item.columnName, item.targetType, item.options);
+    }
+    return current;
   }
 
   // Chronological parsing helper for quarters (Q1 2024), months (Jan, Feb...), and date strings

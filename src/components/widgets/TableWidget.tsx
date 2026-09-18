@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   ArrowUpDown,
   ArrowUp,
@@ -11,10 +11,14 @@ import {
   Layers,
   X,
   Zap,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Sliders,
+  Calendar
 } from 'lucide-react';
-import { ChartConfig, SortClause, ColumnSchema } from '../../types/dashboard';
+import { ChartConfig, SortClause, ColumnSchema, Dataset } from '../../types/dashboard';
 import { DataEngine } from '../../services/dataEngine';
+import { computeColumnStatistics, ColumnStatistics } from '../../services/columnStats';
+import { ColumnHeaderTooltip } from '../panels/ColumnHeaderTooltip';
 
 interface TableWidgetProps {
   rows: Record<string, any>[];
@@ -23,6 +27,7 @@ interface TableWidgetProps {
   onExportCsv?: () => void;
   onOpenSequentialModal?: () => void;
   onUpdateSequentialSort?: (clauses: SortClause[]) => void;
+  onOpenDataTypeModal?: (columnName?: string) => void;
 }
 
 export const TableWidget: React.FC<TableWidgetProps> = ({
@@ -31,7 +36,8 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
   columnsSchema = [],
   onExportCsv,
   onOpenSequentialModal,
-  onUpdateSequentialSort
+  onUpdateSequentialSort,
+  onOpenDataTypeModal
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [localSequentialSort, setLocalSequentialSort] = useState<SortClause[]>(
@@ -39,13 +45,6 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
   );
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = config.pageSize || 7;
-
-  // Sync with prop changes if updated externally
-  React.useEffect(() => {
-    if (config.sequentialSort) {
-      setLocalSequentialSort(config.sequentialSort);
-    }
-  }, [config.sequentialSort]);
 
   const columns = useMemo(() => {
     if (config.visibleColumns && config.visibleColumns.length > 0) {
@@ -56,6 +55,66 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
     }
     return [];
   }, [config.visibleColumns, rows]);
+
+  // Tooltip hover state
+  const [hoveredColName, setHoveredColName] = useState<string | null>(null);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Precompute stats for visible table columns
+  const statsMap = useMemo(() => {
+    const map = new Map<string, ColumnStatistics>();
+    if (!rows || rows.length === 0 || columns.length === 0) return map;
+
+    const dummyDataset: Dataset = {
+      id: 'table-widget-ds',
+      name: 'Table Widget Data',
+      sourceType: 'duckdb',
+      rowCount: rows.length,
+      columns: columns.map((colName) => {
+        const found = columnsSchema?.find((c) => c.name === colName);
+        if (found) return found;
+        const sampleVal = rows.find((r) => r[colName] !== null && r[colName] !== undefined)?.[colName];
+        const isNum = typeof sampleVal === 'number';
+        return {
+          name: colName,
+          type: isNum ? 'number' : 'string',
+          category: isNum ? 'measure' : 'dimension',
+          nullable: true,
+          uniqueCount: 10
+        };
+      }),
+      data: rows,
+      lastRefreshed: ''
+    };
+
+    for (const colName of columns) {
+      map.set(colName, computeColumnStatistics(dummyDataset, colName));
+    }
+    return map;
+  }, [rows, columns, columnsSchema]);
+
+  const handleMouseEnterHeader = (colName: string, e: React.MouseEvent<HTMLElement>) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setAnchorRect(rect);
+    setHoveredColName(colName);
+  };
+
+  const handleMouseLeaveHeader = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredColName(null);
+      setAnchorRect(null);
+    }, 120);
+  };
+
+  // Sync with prop changes if updated externally
+  React.useEffect(() => {
+    if (config.sequentialSort) {
+      setLocalSequentialSort(config.sequentialSort);
+    }
+  }, [config.sequentialSort]);
 
   // Handle setting/clearing sequential sort
   const applySortClauses = (clauses: SortClause[]) => {
@@ -236,6 +295,18 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
             <Zap className="w-3 h-3 fill-current text-yellow-300" />
             <span>Perfect Order</span>
           </button>
+
+          {/* Data Types & Formats Button */}
+          {onOpenDataTypeModal && (
+            <button
+              onClick={() => onOpenDataTypeModal()}
+              title="Change column data types and formats (Convert numeric dates, currency, percent)"
+              className="flex items-center gap-1 px-2 py-1 bg-[#1e293b] hover:bg-[#334155] text-[#dfe2ee] border border-[#334155] rounded-[3px] text-[10px] font-mono transition-colors"
+            >
+              <Sliders className="w-3 h-3 text-[#38bdf8]" />
+              <span>Data Types & Formats</span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -294,31 +365,50 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
               {columns.map((col) => {
                 const sortIdx = localSequentialSort.findIndex((c) => c.column === col);
                 const activeSort = sortIdx !== -1 ? localSequentialSort[sortIdx] : null;
+                const colSchema = columnsSchema?.find((c) => c.name === col);
 
                 return (
                   <th
                     key={col}
                     onClick={(e) => handleHeaderClick(col, e)}
+                    onMouseEnter={(e) => handleMouseEnterHeader(col, e)}
+                    onMouseLeave={handleMouseLeaveHeader}
                     title="Click to sort, Shift+Click to add to Sequential Pipeline"
-                    className="px-3 py-1.5 font-medium cursor-pointer hover:text-[#dfe2ee] transition-colors whitespace-nowrap"
+                    className="px-3 py-1.5 font-medium cursor-pointer hover:text-[#dfe2ee] transition-colors whitespace-nowrap group/th"
                   >
-                    <div className="flex items-center gap-1.5">
-                      <span>{col}</span>
-                      {activeSort ? (
-                        <div className="flex items-center text-[#3b82f6] font-bold">
-                          {localSequentialSort.length > 1 && (
-                            <span className="text-[9px] mr-0.5 bg-[#3b82f6]/20 px-1 rounded">
-                              {sortIdx + 1}
-                            </span>
-                          )}
-                          {activeSort.order === 'desc' ? (
-                            <ArrowDown className="w-2.5 h-2.5" />
-                          ) : (
-                            <ArrowUp className="w-2.5 h-2.5" />
-                          )}
-                        </div>
-                      ) : (
-                        <ArrowUpDown className="w-2.5 h-2.5 opacity-25 hover:opacity-75" />
+                    <div className="flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span>{col}</span>
+                        {activeSort ? (
+                          <div className="flex items-center text-[#3b82f6] font-bold">
+                            {localSequentialSort.length > 1 && (
+                              <span className="text-[9px] mr-0.5 bg-[#3b82f6]/20 px-1 rounded">
+                                {sortIdx + 1}
+                              </span>
+                            )}
+                            {activeSort.order === 'desc' ? (
+                              <ArrowDown className="w-2.5 h-2.5" />
+                            ) : (
+                              <ArrowUp className="w-2.5 h-2.5" />
+                            )}
+                          </div>
+                        ) : (
+                          <ArrowUpDown className="w-2.5 h-2.5 opacity-25 hover:opacity-75" />
+                        )}
+                      </div>
+
+                      {onOpenDataTypeModal && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenDataTypeModal(col);
+                          }}
+                          title={`Change Data Type or Format for ${col}`}
+                          className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:bg-[#334155] text-[#8c909f] hover:text-[#38bdf8] rounded transition-opacity"
+                        >
+                          <Sliders className="w-2.5 h-2.5" />
+                        </button>
                       )}
                     </div>
                   </th>
@@ -334,8 +424,15 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
               >
                 {columns.map((col) => {
                   const val = row[col];
+                  const colSchema = columnsSchema?.find((c) => c.name === col);
                   const isRevenue = col === 'Revenue' || col === 'Cost' || col === 'Profit';
                   const isMargin = col === 'MarginPct' || col === 'DiscountPct';
+                  const isDate =
+                    colSchema?.type === 'date' ||
+                    colSchema?.format === 'date' ||
+                    Boolean(colSchema?.dateFormat) ||
+                    col.toLowerCase().includes('date') ||
+                    col.toLowerCase().includes('time');
 
                   return (
                     <td key={col} className="px-3 py-1.5 whitespace-nowrap">
@@ -367,6 +464,12 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
                         >
                           {val}%
                         </span>
+                      ) : isDate ? (
+                        <span className="text-[#93c5fd]">
+                          {DataEngine.formatValue(val, colSchema || { name: col, type: 'date', format: 'date', category: 'time', nullable: false, uniqueCount: 1 })}
+                        </span>
+                      ) : colSchema ? (
+                        <span className="text-[#c2c6d6]">{DataEngine.formatValue(val, colSchema)}</span>
                       ) : (
                         <span className="text-[#c2c6d6]">{String(val ?? '')}</span>
                       )}
@@ -401,6 +504,14 @@ export const TableWidget: React.FC<TableWidgetProps> = ({
           </button>
         </div>
       </div>
+
+      {hoveredColName && statsMap.get(hoveredColName) && (
+        <ColumnHeaderTooltip
+          stats={statsMap.get(hoveredColName)!}
+          anchorRect={anchorRect}
+          visible={Boolean(hoveredColName && anchorRect)}
+        />
+      )}
     </div>
   );
 };

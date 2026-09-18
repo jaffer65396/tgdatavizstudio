@@ -13,7 +13,9 @@ import {
   Upload,
   Database,
   Globe,
-  ArrowUpDown
+  ArrowUpDown,
+  Code,
+  Sliders
 } from 'lucide-react';
 import { Dataset } from '../../types/dashboard';
 
@@ -26,6 +28,8 @@ interface ToolbarProps {
   onOpenSequentialModal?: () => void;
   onAddWidget: () => void;
   onAddMapWidget?: () => void;
+  onAddHtmlWidget?: () => void;
+  onOpenDataTypeModal?: () => void;
   isEditMode: boolean;
   onToggleEditMode: () => void;
   activeCrossFilterCount: number;
@@ -49,6 +53,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onOpenSequentialModal,
   onAddWidget,
   onAddMapWidget,
+  onAddHtmlWidget,
+  onOpenDataTypeModal,
   isEditMode,
   onToggleEditMode,
   activeCrossFilterCount,
@@ -161,6 +167,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </button>
         )}
 
+        {/* Data Types & Formats Engine Button */}
+        {onOpenDataTypeModal && (
+          <button
+            onClick={onOpenDataTypeModal}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-[3px] bg-[#0ea5e9]/15 hover:bg-[#0ea5e9]/25 text-[#7dd3fc] border border-[#0ea5e9]/30 transition-colors text-[11px] font-medium font-sans"
+            title="Convert and format column data types (convert numeric dates, numbers, currency)"
+          >
+            <Sliders className="w-3 h-3 text-[#38bdf8]" />
+            <span>Data Types & Formats</span>
+          </button>
+        )}
+
         {/* Clear active cross filters if any are set */}
         {activeCrossFilterCount > 0 && (
           <button
@@ -261,6 +279,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           >
             <Globe className="w-3 h-3 text-[#60a5fa]" />
             <span>Add Map</span>
+          </button>
+        )}
+
+        {/* Add HTML Widget Shortcut */}
+        {onAddHtmlWidget && (
+          <button
+            onClick={onAddHtmlWidget}
+            className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[#8b5cf6]/10 hover:bg-[#8b5cf6]/20 border border-[#8b5cf6]/30 text-[#d0bcff] rounded-[3px] text-[11px] font-medium transition-colors"
+            title="Integrate custom HTML, embedded banners, iframes or widgets"
+          >
+            <Code className="w-3 h-3 text-[#a78bfa]" />
+            <span>Add HTML</span>
           </button>
         )}
 

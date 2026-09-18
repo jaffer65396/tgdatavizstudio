@@ -13,7 +13,11 @@ import {
   Globe,
   ArrowUpDown,
   Zap,
-  Sparkles
+  Sparkles,
+  Code,
+  Shield,
+  Edit3,
+  Calendar
 } from 'lucide-react';
 import { DashboardElement, ChartType, AggregationType, Dataset, SortClause } from '../../types/dashboard';
 import { DataEngine } from '../../services/dataEngine';
@@ -24,6 +28,8 @@ interface PropertiesDrawerProps {
   onClose: () => void;
   onUpdateElement: (updated: DashboardElement) => void;
   onOpenSequentialModal?: () => void;
+  onOpenHtmlModal?: () => void;
+  onOpenDataTypeModal?: (columnName?: string) => void;
 }
 
 export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
@@ -31,7 +37,9 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
   dataset,
   onClose,
   onUpdateElement,
-  onOpenSequentialModal
+  onOpenSequentialModal,
+  onOpenHtmlModal,
+  onOpenDataTypeModal
 }) => {
   if (!element) return null;
 
@@ -50,6 +58,29 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
 
   const dimensions = dataset.columns.filter((c) => c.category === 'dimension' || c.category === 'time');
   const measures = dataset.columns.filter((c) => c.category === 'measure');
+
+  // Calculate live trendline diagnostic summary for inspector preview
+  const trendlinePreview = React.useMemo(() => {
+    if (!element || !element.config.showTrendline) return null;
+    try {
+      const isScatter = element.config.chartType === 'scatter';
+      const queryRes = DataEngine.query(dataset, {
+        dimension: element.config.dimension,
+        measure: element.config.measure,
+        secondaryMeasure: element.config.secondaryMeasure,
+        aggregation: element.config.aggregation || 'SUM',
+        limit: isScatter ? 60 : 14,
+        showTrendline: true,
+        trendlineModel: element.config.trendlineModel || 'linear',
+        polynomialDegree: element.config.polynomialDegree || 2,
+        forecastPeriods: element.config.forecastPeriods || 0,
+        showConfidenceInterval: element.config.showConfidenceInterval
+      });
+      return queryRes.trendline;
+    } catch {
+      return null;
+    }
+  }, [element, dataset]);
 
   const handleChangeType = (type: ChartType) => {
     onUpdateElement({
@@ -104,32 +135,125 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
           />
         </div>
 
-        {/* Chart Type Selection */}
-        <div>
-          <label className="block text-[10px] font-mono uppercase tracking-wider text-[#8c909f] mb-1.5">
-            Visualization Type
-          </label>
-          <div className="grid grid-cols-3 gap-1.5">
-            {chartTypes.map((t) => {
-              const Icon = t.icon;
-              const isSelected = element.config.chartType === t.id;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => handleChangeType(t.id)}
-                  className={`p-1.5 rounded-[3px] border flex flex-col items-center gap-1 text-center transition-colors ${
-                    isSelected
-                      ? 'bg-[#1e293b] border-[#3b82f6] text-[#adc6ff]'
-                      : 'bg-[#0b0f17] border-[#1e293b] text-[#8c909f] hover:border-[#334155]'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span className="text-[9px] font-mono leading-tight">{t.label}</span>
-                </button>
-              );
-            })}
+        {/* HTML Widget Inspector Branch */}
+        {element.type === 'html' ? (
+          <div className="space-y-3 pt-1 border-t border-[#1e293b]">
+            <div className="p-2 bg-[#3b82f6]/10 border border-[#3b82f6]/30 rounded-[4px]">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold text-[#60a5fa] flex items-center gap-1.5">
+                  <Code className="w-3.5 h-3.5" />
+                  <span>Custom HTML Widget</span>
+                </span>
+                <span className="text-[9px] font-mono bg-[#3b82f6]/20 text-[#93c5fd] px-1.5 py-0.5 rounded">
+                  Active
+                </span>
+              </div>
+              <p className="text-[10px] text-[#94a3b8] leading-tight">
+                Integrates raw HTML markup, inline styles, iframe embeds, and rich badges.
+              </p>
+            </div>
+
+            {onOpenHtmlModal && (
+              <button
+                type="button"
+                onClick={onOpenHtmlModal}
+                className="w-full py-2 px-3 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-[4px] text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-blue-500/20"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Open HTML Code Studio</span>
+              </button>
+            )}
+
+            {/* Quick HTML Source Code Editor */}
+            <div>
+              <label className="block text-[10px] font-mono uppercase tracking-wider text-[#8c909f] mb-1">
+                Quick HTML Code Editor
+              </label>
+              <textarea
+                value={element.config.htmlCode || element.customHtml || ''}
+                onChange={(e) => {
+                  onUpdateElement({
+                    ...element,
+                    customHtml: e.target.value,
+                    config: {
+                      ...element.config,
+                      htmlCode: e.target.value
+                    }
+                  });
+                }}
+                rows={7}
+                className="w-full p-2 bg-[#070a10] border border-[#1e293b] focus:border-[#3b82f6] rounded-[3px] text-[#38bdf8] font-mono text-[10px] leading-relaxed outline-none resize-y"
+                placeholder="<div>Custom HTML content...</div>"
+                spellCheck={false}
+              />
+            </div>
+
+            {/* Sandbox Security Toggle */}
+            <label className="flex items-center justify-between text-[11px] text-[#dfe2ee] cursor-pointer pt-1">
+              <span className="flex items-center gap-1 text-[10px] font-mono text-[#94a3b8]">
+                <Shield className="w-3 h-3 text-[#38bdf8]" />
+                <span>Sandboxed Iframe Mode</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={element.config.htmlSandbox || false}
+                onChange={(e) => {
+                  onUpdateElement({
+                    ...element,
+                    config: {
+                      ...element.config,
+                      htmlSandbox: e.target.checked
+                    }
+                  });
+                }}
+                className="rounded accent-[#3b82f6]"
+              />
+            </label>
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Chart Type Selection */}
+            <div>
+              <label className="block text-[10px] font-mono uppercase tracking-wider text-[#8c909f] mb-1.5">
+                Visualization Type
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {chartTypes.map((t) => {
+                  const Icon = t.icon;
+                  const isSelected = element.config.chartType === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => handleChangeType(t.id)}
+                      className={`p-1.5 rounded-[3px] border flex flex-col items-center gap-1 text-center transition-colors ${
+                        isSelected
+                          ? 'bg-[#1e293b] border-[#3b82f6] text-[#adc6ff]'
+                          : 'bg-[#0b0f17] border-[#1e293b] text-[#8c909f] hover:border-[#334155]'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      <span className="text-[9px] font-mono leading-tight">{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick Data Types & Formats button */}
+            {onOpenDataTypeModal && (
+              <div className="pt-2 border-t border-[#1e293b]">
+                <button
+                  type="button"
+                  onClick={() => onOpenDataTypeModal(element.config.dimension || element.config.measure)}
+                  className="w-full py-1.5 px-2.5 bg-[#1e293b] hover:bg-[#334155] border border-[#3b82f6]/40 text-[#93c5fd] rounded-[3px] text-[10px] font-mono flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Sliders className="w-3 h-3 text-[#38bdf8]" />
+                  <span>Format Column Data Types & Dates</span>
+                </button>
+              </div>
+            )}
+          </>
+        )}
 
         {/* Map Specific Configuration */}
         {element.config.chartType === 'map' && (
@@ -331,6 +455,178 @@ export const PropertiesDrawer: React.FC<PropertiesDrawerProps> = ({
             )}
           </div>
         </div>
+
+        {/* Predictive Trendline & Forecasting */}
+        {['line', 'area', 'scatter', 'bar'].includes(element.config.chartType) && (
+          <div className="pt-3 border-t border-[#1e293b] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-[#f59e0b]" />
+                <span className="text-[11px] font-semibold text-[#f8fafc]">Predictive Trendline</span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="toggle-trendline-enabled"
+                  checked={element.config.showTrendline || false}
+                  onChange={(e) => handleChangeField('showTrendline', e.target.checked)}
+                  className="rounded accent-[#f59e0b] w-4 h-4"
+                />
+              </label>
+            </div>
+
+            {element.config.showTrendline && (
+              <div className="p-2.5 rounded-[4px] bg-[#0b0f17]/90 border border-[#1e293b] space-y-3">
+                {/* Model Selection Tabs */}
+                <div>
+                  <div className="text-[10px] font-medium text-[#94a3b8] mb-1.5 flex items-center justify-between">
+                    <span>Regression Model</span>
+                    <span className="text-[9px] font-mono text-[#f59e0b] uppercase font-bold">
+                      {element.config.trendlineModel || 'linear'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 p-0.5 rounded-[4px] bg-[#111827] border border-[#1e293b]">
+                    {[
+                      { id: 'linear', label: 'Linear', formula: 'y=mx+b' },
+                      { id: 'exponential', label: 'Exponential', formula: 'y=aeᵇˣ' },
+                      { id: 'polynomial', label: 'Polynomial', formula: 'y=Σcᵢxⁱ' }
+                    ].map((m) => {
+                      const isSelected = (element.config.trendlineModel || 'linear') === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          id={`btn-model-${m.id}`}
+                          type="button"
+                          onClick={() => handleChangeField('trendlineModel', m.id)}
+                          className={`flex flex-col items-center py-1.5 px-1 rounded-[3px] text-center transition-all ${
+                            isSelected
+                              ? 'bg-[#f59e0b]/15 text-[#f59e0b] border border-[#f59e0b]/40 font-semibold shadow-sm'
+                              : 'text-[#8c909f] hover:text-[#dfe2ee] hover:bg-[#181c24]'
+                          }`}
+                        >
+                          <span className="text-[10px] leading-tight">{m.label}</span>
+                          <span className="text-[8px] font-mono opacity-70">{m.formula}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Polynomial Degree (if polynomial selected) */}
+                {element.config.trendlineModel === 'polynomial' && (
+                  <div>
+                    <div className="text-[10px] font-medium text-[#94a3b8] mb-1.5 flex items-center justify-between">
+                      <span>Polynomial Degree</span>
+                      <span className="text-[9px] font-mono text-[#dfe2ee]">
+                        {(element.config.polynomialDegree || 2) === 2 ? 'Degree 2 (Quadratic)' : 'Degree 3 (Cubic)'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        id="btn-poly-deg-2"
+                        onClick={() => handleChangeField('polynomialDegree', 2)}
+                        className={`py-1 px-2 rounded-[3px] text-[10px] font-mono border transition-all ${
+                          (element.config.polynomialDegree || 2) === 2
+                            ? 'bg-[#f59e0b]/15 text-[#f59e0b] border-[#f59e0b]/40 font-semibold'
+                            : 'bg-[#111827] text-[#8c909f] border-[#1e293b] hover:text-[#dfe2ee]'
+                        }`}
+                      >
+                        Degree 2: Quadratic
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-poly-deg-3"
+                        onClick={() => handleChangeField('polynomialDegree', 3)}
+                        className={`py-1 px-2 rounded-[3px] text-[10px] font-mono border transition-all ${
+                          element.config.polynomialDegree === 3
+                            ? 'bg-[#f59e0b]/15 text-[#f59e0b] border-[#f59e0b]/40 font-semibold'
+                            : 'bg-[#111827] text-[#8c909f] border-[#1e293b] hover:text-[#dfe2ee]'
+                        }`}
+                      >
+                        Degree 3: Cubic
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Predictive Forecast Horizon (Time-Series / Chronological charts) */}
+                {element.config.chartType !== 'scatter' && (
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] text-[#94a3b8] mb-1">
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-[#38bdf8]" />
+                        Forecast Horizon (Future Periods)
+                      </span>
+                      <span className="font-mono text-[#38bdf8] font-semibold">
+                        +{element.config.forecastPeriods || 0} periods
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      id="slider-forecast-periods"
+                      min={0}
+                      max={6}
+                      step={1}
+                      value={element.config.forecastPeriods || 0}
+                      onChange={(e) => handleChangeField('forecastPeriods', parseInt(e.target.value, 10))}
+                      className="w-full accent-[#38bdf8] h-1.5 bg-[#1e293b] rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[9px] font-mono text-[#64748b] mt-0.5">
+                      <span>0 (None)</span>
+                      <span>+2</span>
+                      <span>+4</span>
+                      <span>+6 Periods</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Confidence Interval Band */}
+                <label className="flex items-center justify-between text-[11px] text-[#dfe2ee] cursor-pointer pt-1 border-t border-[#1e293b]/70">
+                  <span>95% Confidence Interval Band</span>
+                  <input
+                    type="checkbox"
+                    id="toggle-confidence-interval"
+                    checked={element.config.showConfidenceInterval || false}
+                    onChange={(e) => handleChangeField('showConfidenceInterval', e.target.checked)}
+                    className="rounded accent-[#f59e0b]"
+                  />
+                </label>
+
+                {/* Live Diagnostics Card */}
+                {trendlinePreview && (
+                  <div className="p-2 rounded-[3px] bg-[#111827] border border-[#1e293b] font-mono text-[10px] space-y-1">
+                    <div className="flex items-center justify-between text-[9px] text-[#64748b] uppercase tracking-wider font-sans font-semibold">
+                      <span>Fit Diagnostics</span>
+                      <span className="text-[#f59e0b] font-mono uppercase">{trendlinePreview.model}</span>
+                    </div>
+                    <div className="text-[#f59e0b] font-semibold truncate" title={trendlinePreview.equation}>
+                      {trendlinePreview.equation}
+                    </div>
+                    <div className="flex items-center justify-between text-[#8c909f]">
+                      <span>R² Fit Quality:</span>
+                      <span
+                        className={`font-bold ${
+                          trendlinePreview.rSquared >= 0.8
+                            ? 'text-[#4edea3]'
+                            : trendlinePreview.rSquared >= 0.5
+                            ? 'text-[#60a5fa]'
+                            : 'text-[#f59e0b]'
+                        }`}
+                      >
+                        {trendlinePreview.rSquared} ({trendlinePreview.rSquared >= 0.8 ? 'Strong' : 'Moderate'})
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[#8c909f]">
+                      <span>RMSE:</span>
+                      <span className="text-[#dfe2ee]">{trendlinePreview.rmse.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Presentation Toggles */}
         <div className="pt-2 border-t border-[#1e293b] space-y-2">
